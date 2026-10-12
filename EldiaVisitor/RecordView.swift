@@ -8,14 +8,17 @@ struct RecordView: View {
     @State private var drafts: [StoreID: Draft] = [.modern: Draft(), .luxury: Draft()]
     @State private var selected: StoreID = .modern
     @State private var confirmLogout = false
+    @State private var landscape = false
 
     private var isWide: Bool { sizeClass == .regular }
+    /// iPad 横向き：時計を上のバーに移し、ボタンを低くして1画面に収める
+    private var compact: Bool { isWide && landscape }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 16) {
-                    ClockHeader(large: isWide)
+                VStack(spacing: compact ? 10 : 16) {
+                    if !compact { ClockHeader(large: isWide) }
                     if let err = logs.lastError {
                         Label(err, systemImage: "exclamationmark.icloud")
                             .font(.footnote.weight(.semibold))
@@ -26,7 +29,7 @@ struct RecordView: View {
                     if isWide {
                         HStack(alignment: .top, spacing: 16) {
                             ForEach(StoreID.allCases) { s in
-                                StorePanel(store: s, draft: binding(s), wide: true)
+                                StorePanel(store: s, draft: binding(s), wide: true, compact: compact)
                             }
                         }
                     } else {
@@ -39,12 +42,23 @@ struct RecordView: View {
                     }
                 }
                 .padding(.horizontal, isWide ? 20 : 16)
+                .padding(.top, compact ? 6 : 0)
                 .padding(.bottom, 24)
             }
             .background(Palette.ground)
+            .background(
+                GeometryReader { g in
+                    Color.clear
+                        .onAppear { landscape = g.size.width > g.size.height }
+                        .onChange(of: g.size) { _, size in landscape = size.width > size.height }
+                }
+            )
             .refreshable { await logs.syncNow() }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    if compact { CompactClock() }
+                }
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
                         Text(auth.email)
@@ -103,19 +117,36 @@ struct ClockHeader: View {
     }
 }
 
+/// iPad 横向き用：上のバーに1行で表示する時計
+struct CompactClock: View {
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { ctx in
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(JST.hms.string(from: ctx.date))
+                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                Text(JST.dateLong.string(from: ctx.date))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Palette.sub)
+            }
+        }
+    }
+}
+
 // MARK: - 店舗ごとの入力パネル
 
 struct StorePanel: View {
     let store: StoreID
     @Binding var draft: Draft
     let wide: Bool
+    var compact: Bool = false
     @Environment(LogStore.self) private var logs
     @State private var deleting: DisplayLog?
 
-    private var cellHeight: CGFloat { wide ? 56 : 48 }
+    private var cellHeight: CGFloat { compact ? 38 : (wide ? 56 : 48) }
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: compact ? 10 : 12) {
             inputCard
             historyCard
         }
@@ -140,17 +171,17 @@ struct StorePanel: View {
                 Text("今日 \(today.groups)組・\(today.people)名").font(.footnote.weight(.semibold))
             }
             .foregroundStyle(store.deep)
-            .padding(.horizontal, 16).padding(.vertical, 12)
+            .padding(.horizontal, 16).padding(.vertical, compact ? 8 : 12)
             .background(store.soft)
 
-            VStack(spacing: 8) {
+            VStack(spacing: compact ? 6 : 8) {
                 HStack(spacing: 8) {
                     Color.clear.frame(width: 64, height: 1)
                     ForEach(Gender.allCases) { g in
                         Label(g.label, systemImage: g.symbol)
                             .font(.subheadline.weight(.heavy))
                             .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity, minHeight: 36)
+                            .frame(maxWidth: .infinity, minHeight: compact ? 30 : 36)
                             .background(g.color, in: RoundedRectangle(cornerRadius: 10))
                     }
                 }
@@ -170,9 +201,11 @@ struct StorePanel: View {
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("客層（1つ選択）").font(.footnote.weight(.bold)).foregroundStyle(Palette.ink2)
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 80), spacing: 6)], spacing: 6) {
+                    LazyVGrid(columns: compact ? Array(repeating: GridItem(.flexible(), spacing: 4), count: Segment.allCases.count)
+                                               : [GridItem(.adaptive(minimum: 80), spacing: 6)],
+                              spacing: 6) {
                         ForEach(Segment.allCases) { s in
-                            SegmentChip(segment: s, selected: draft.segment == s) {
+                            SegmentChip(segment: s, selected: draft.segment == s, height: compact ? 34 : 38) {
                                 draft.segment = s
                             }
                         }
@@ -184,9 +217,9 @@ struct StorePanel: View {
                             .foregroundStyle(draft.deliHasMale ? Palette.sunday : Palette.teal)
                     }
                 }
-                .padding(.top, 4)
+                .padding(.top, compact ? 2 : 4)
 
-                Divider().padding(.vertical, 4)
+                Divider().padding(.vertical, compact ? 2 : 4)
 
                 HStack(alignment: .center) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -227,9 +260,9 @@ struct StorePanel: View {
                     .disabled(!draft.canRecord)
                     .layoutPriority(1)
                 }
-                .controlSize(.large)
+                .controlSize(compact ? .regular : .large)
             }
-            .padding(14)
+            .padding(compact ? 10 : 14)
         }
         .background(Palette.card, in: RoundedRectangle(cornerRadius: 22))
         .clipShape(RoundedRectangle(cornerRadius: 22))
@@ -281,7 +314,7 @@ struct StorePanel: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("\(JST.hm.string(from: item.log.visited_at))の記録を削除")
                 }
-                .frame(minHeight: 52)
+                .frame(minHeight: compact ? 44 : 52)
                 .overlay(alignment: .top) { Rectangle().fill(Palette.line).frame(height: 1) }
                 .contentShape(Rectangle())
                 .contextMenu {
@@ -320,6 +353,7 @@ struct CountButton: View {
 struct SegmentChip: View {
     let segment: Segment
     let selected: Bool
+    var height: CGFloat = 38
     let action: () -> Void
 
     var body: some View {
@@ -327,9 +361,9 @@ struct SegmentChip: View {
             Text(segment.label)
                 .font(.subheadline.weight(.bold))
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .minimumScaleFactor(0.55)
                 .foregroundStyle(selected ? Color.white : Palette.ink2)
-                .frame(maxWidth: .infinity, minHeight: 38)
+                .frame(maxWidth: .infinity, minHeight: height)
                 .background(Capsule().fill(selected ? Palette.teal : Color.white))
                 .overlay(Capsule().strokeBorder(selected ? Palette.teal : Color(hex: 0xD1D1D6), lineWidth: 1.5))
         }
