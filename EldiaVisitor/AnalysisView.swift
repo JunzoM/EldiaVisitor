@@ -99,17 +99,30 @@ struct CSVButton: View {
     @State private var error: String?
 
     var body: some View {
-        Button {
-            Task { await run() }
-        } label: {
-            Group {
-                if busy { ProgressView() } else { Label("CSV書き出し", systemImage: "square.and.arrow.up") }
+        Group {
+            if let file {
+                // 共有シートは ShareLink に任せる（iPad・Mac でも安全に開ける）
+                ShareLink(item: file.url) {
+                    Label("CSVを共有", systemImage: "square.and.arrow.up")
+                        .frame(maxWidth: .infinity, minHeight: 36)
+                }
+                .prominentGlassButton()
+                .tint(Palette.teal)
+            } else {
+                Button {
+                    Task { await run() }
+                } label: {
+                    Group {
+                        if busy { ProgressView() } else { Label("CSV書き出し", systemImage: "doc.text") }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 36)
+                }
+                .glassButton()
+                .disabled(busy)
             }
-            .frame(maxWidth: .infinity, minHeight: 36)
         }
-        .glassButton()
-        .disabled(busy)
-        .sheet(item: $file) { f in ShareSheet(url: f.url).presentationDetents([.medium, .large]) }
+        .onChange(of: period) { _, _ in file = nil }
+        .onChange(of: store) { _, _ in file = nil }
         .alert("書き出せませんでした", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(error ?? "") }
@@ -323,7 +336,7 @@ struct HourChart: View {
         let peak = counts.indices.max { counts[$0] < counts[$1] } ?? -1
         Chart {
             ForEach(0..<24, id: \.self) { h in
-                BarMark(x: .value("時", Double(h)), y: .value("組数", counts[h]))
+                BarMark(x: .value("時", Double(h)), y: .value("組数", counts[h]), width: .fixed(8))
                     .foregroundStyle(h == peak && counts[h] > 0 ? Palette.teal : Palette.teal.opacity(0.35))
             }
         }
