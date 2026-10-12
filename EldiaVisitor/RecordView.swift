@@ -269,6 +269,17 @@ struct StorePanel: View {
                             .accessibilityLabel("未送信")
                     }
                     Text("\(item.log.total)名").font(.subheadline.weight(.bold)).foregroundStyle(Palette.ink2)
+                    Button {
+                        deleting = item
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Palette.sunday)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(JST.hm.string(from: item.log.visited_at))の記録を削除")
                 }
                 .frame(minHeight: 52)
                 .overlay(alignment: .top) { Rectangle().fill(Palette.line).frame(height: 1) }
