@@ -157,7 +157,8 @@ struct Columns<Content: View>: View {
             ForEach(columns) { col in
                 VStack(alignment: .leading, spacing: 6) {
                     if columns.count > 1 {
-                        Text(col.title).font(.subheadline.weight(.heavy)).tracking(1).foregroundStyle(col.color)
+                        Text(col.title).font(.subheadline.weight(.heavy)).foregroundStyle(col.color)
+                            .frame(maxWidth: .infinity, alignment: .center)
                     }
                     content(col)
                 }

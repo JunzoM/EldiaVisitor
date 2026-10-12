@@ -36,7 +36,7 @@ enum Palette {
 enum StoreID: String, CaseIterable, Identifiable, Codable, Hashable {
     case modern, luxury
     var id: String { rawValue }
-    var label: String { self == .modern ? "MODERN" : "LUXURY" }
+    var label: String { self == .modern ? "モダン" : "ラグジュアリー" }
     var accent: Color { self == .modern ? Color(hex: 0x0277BD) : Color(hex: 0x8A6408) }
     var deep: Color { self == .modern ? Color(hex: 0x01579B) : Color(hex: 0x6B4E06) }
     var soft: Color { self == .modern ? Color(hex: 0xE1F0FA) : Color(hex: 0xF5E9C8) }

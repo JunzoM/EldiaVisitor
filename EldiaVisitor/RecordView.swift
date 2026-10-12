@@ -165,11 +165,11 @@ struct StorePanel: View {
     private var inputCard: some View {
         let today = logs.today(for: store)
         return VStack(spacing: 0) {
-            HStack {
-                Text(store.label).font(.title3.weight(.heavy)).tracking(1)
-                Spacer()
+            VStack(spacing: 2) {
+                Text(store.label).font(.title3.weight(.heavy))
                 Text("今日 \(today.groups)組・\(today.people)名").font(.footnote.weight(.semibold))
             }
+            .frame(maxWidth: .infinity)
             .foregroundStyle(store.deep)
             .padding(.horizontal, 16).padding(.vertical, compact ? 8 : 12)
             .background(store.soft)
@@ -272,15 +272,15 @@ struct StorePanel: View {
     private var historyCard: some View {
         let items = logs.recent(for: store)
         return VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("直前5組").font(.headline)
-                Spacer()
+            HStack(spacing: 8) {
                 Text(store.label)
-                    .font(.caption2.weight(.bold)).tracking(0.5)
-                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .font(.footnote.weight(.bold))
+                    .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(store.soft, in: RoundedRectangle(cornerRadius: 6))
                     .foregroundStyle(store.deep)
+                Text("直前5組").font(.headline)
             }
+            .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
             if items.isEmpty {
                 Text("まだ記録がありません")

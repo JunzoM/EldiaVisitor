@@ -202,8 +202,8 @@ struct KPICard: View {
                     GridRow {
                         Text("").gridColumnAlignment(.leading)
                         ForEach(columns) { c in
-                            Text(c.title).font(.subheadline.weight(.heavy)).tracking(1).foregroundStyle(c.color)
-                                .gridColumnAlignment(.trailing)
+                            Text(c.title).font(.subheadline.weight(.heavy)).foregroundStyle(c.color)
+                                .frame(maxWidth: .infinity, alignment: .center)
                         }
                     }
                     Divider()
@@ -214,7 +214,7 @@ struct KPICard: View {
                         ForEach(item.values.indices, id: \.self) { i in
                             Text(item.values[i])
                                 .font(.body.weight(.bold)).monospacedDigit()
-                                .frame(maxWidth: .infinity, alignment: .trailing)
+                                .frame(maxWidth: .infinity, alignment: columns.count > 1 ? .center : .trailing)
                         }
                     }
                 }
