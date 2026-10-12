@@ -292,3 +292,25 @@ let weekdayLabels = ["月", "火", "水", "木", "金", "土", "日"]
 func weekdayColor(_ dow: Int) -> Color {
     dow == 6 ? Palette.saturday : (dow == 7 ? Palette.sunday : Color.primary)
 }
+
+// MARK: - ボタンの見た目（iOS 26 以上は Liquid Glass、iPadOS 17 などは通常のボタン）
+
+extension View {
+    @ViewBuilder
+    func glassButton() -> some View {
+        if #available(iOS 26.0, *) {
+            self.buttonStyle(.glass)
+        } else {
+            self.buttonStyle(.bordered)
+        }
+    }
+
+    @ViewBuilder
+    func prominentGlassButton() -> some View {
+        if #available(iOS 26.0, *) {
+            self.buttonStyle(.glassProminent)
+        } else {
+            self.buttonStyle(.borderedProminent)
+        }
+    }
+}

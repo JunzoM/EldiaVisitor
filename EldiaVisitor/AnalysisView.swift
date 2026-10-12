@@ -39,7 +39,7 @@ struct AnalysisView: View {
                     } label: {
                         Label("曜日別を見る", systemImage: "calendar").frame(maxWidth: .infinity, minHeight: 36)
                     }
-                    .buttonStyle(.glass)
+                    .glassButton()
                 }
                 .controlSize(.large)
             }
@@ -107,7 +107,7 @@ struct CSVButton: View {
             }
             .frame(maxWidth: .infinity, minHeight: 36)
         }
-        .buttonStyle(.glass)
+        .glassButton()
         .disabled(busy)
         .sheet(item: $file) { f in ShareSheet(url: f.url).presentationDetents([.medium, .large]) }
         .alert("書き出せませんでした", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {

@@ -207,12 +207,12 @@ struct StorePanel: View {
                     Button { draft.undo() } label: {
                         Text("一つ戻す").frame(maxWidth: .infinity, minHeight: 36)
                     }
-                    .buttonStyle(.glass)
+                    .glassButton()
                     .disabled(draft.taps.isEmpty)
                     Button { draft.clear() } label: {
                         Text("クリア").frame(maxWidth: .infinity, minHeight: 36)
                     }
-                    .buttonStyle(.glass)
+                    .glassButton()
                     .disabled(draft.isEmpty && draft.segment == .general)
                     Button {
                         logs.record(store: store, draft: draft)
@@ -222,7 +222,7 @@ struct StorePanel: View {
                             .font(.headline)
                             .frame(maxWidth: .infinity, minHeight: 36)
                     }
-                    .buttonStyle(.glassProminent)
+                    .prominentGlassButton()
                     .tint(store.accent)
                     .disabled(!draft.canRecord)
                     .layoutPriority(1)

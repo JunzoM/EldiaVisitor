@@ -14,4 +14,4 @@ MODERN・LUXURY 2店舗の来店客層（男女×年齢層・客層）を、カ�
 2. ターゲット EldiaVisitor › Signing & Capabilities で Team を選ぶ
 3. 実機を選んで実行
 
-Bundle ID：`com.bestdelight.eldiavisitor`／対応：iOS 26 以降
+Bundle ID：`com.bestdelight.eldiavisitor`／対応：iOS・iPadOS 17 以降（iOS 26 以降は Liquid Glass 表示）

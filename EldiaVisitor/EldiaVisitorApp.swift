@@ -85,7 +85,7 @@ struct LoginView: View {
                     }
                     .frame(maxWidth: .infinity, minHeight: 32)
                 }
-                .buttonStyle(.glassProminent)
+                .prominentGlassButton()
                 .tint(Palette.teal)
                 .disabled(busy || email.isEmpty || password.isEmpty)
             }
