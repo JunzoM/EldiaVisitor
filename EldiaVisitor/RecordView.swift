@@ -189,8 +189,9 @@ struct StorePanel: View {
                     HStack(spacing: 8) {
                         Text(a.label)
                             .font(.subheadline.weight(.bold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
                             .frame(width: 64, alignment: .leading)
-                            .minimumScaleFactor(0.8)
                         ForEach(Gender.allCases) { g in
                             CountButton(gender: g, age: a, count: draft.count(g, a), height: cellHeight) {
                                 draft.add(g, a)
@@ -236,31 +237,25 @@ struct StorePanel: View {
                     }
                 }
 
+                // 一つ戻す：クリア：記録する ＝ 1：1：2（どの iOS でも同じ見た目の自前ボタン）
                 HStack(spacing: 8) {
-                    Button { draft.undo() } label: {
-                        Text("一つ戻す").frame(maxWidth: .infinity, minHeight: 36)
+                    HStack(spacing: 8) {
+                        ActionButton(title: "一つ戻す", fill: Color(hex: 0xE9E9EE), foreground: Color.primary,
+                                     height: compact ? 40 : 46) { draft.undo() }
+                            .disabled(draft.taps.isEmpty)
+                        ActionButton(title: "クリア", fill: Color(hex: 0xE9E9EE), foreground: Color.primary,
+                                     height: compact ? 40 : 46) { draft.clear() }
+                            .disabled(draft.isEmpty && draft.segment == .general)
                     }
-                    .glassButton()
-                    .disabled(draft.taps.isEmpty)
-                    Button { draft.clear() } label: {
-                        Text("クリア").frame(maxWidth: .infinity, minHeight: 36)
-                    }
-                    .glassButton()
-                    .disabled(draft.isEmpty && draft.segment == .general)
-                    Button {
+                    .frame(maxWidth: .infinity)
+                    ActionButton(title: wide ? "記録する" : "\(store.label) に記録", fill: store.accent, foreground: .white,
+                                 height: compact ? 40 : 46, bold: true) {
                         logs.record(store: store, draft: draft)
                         draft.clear()
-                    } label: {
-                        Text(wide ? "記録する" : "\(store.label) に記録")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity, minHeight: 36)
                     }
-                    .prominentGlassButton()
-                    .tint(store.accent)
                     .disabled(!draft.canRecord)
-                    .layoutPriority(1)
+                    .frame(maxWidth: .infinity)
                 }
-                .controlSize(compact ? .regular : .large)
             }
             .padding(compact ? 10 : 14)
         }
@@ -369,5 +364,31 @@ struct SegmentChip: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// 記録欄の操作ボタン（OS の標準ボタンに頼らず、iPadOS 17 でも潰れない）
+struct ActionButton: View {
+    let title: String
+    let fill: Color
+    let foreground: Color
+    var height: CGFloat = 46
+    var bold: Bool = false
+    let action: () -> Void
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(bold ? .headline : .subheadline.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .foregroundStyle(foreground)
+                .padding(.horizontal, 6)
+                .frame(maxWidth: .infinity, minHeight: height)
+                .background(RoundedRectangle(cornerRadius: 12).fill(fill))
+                .opacity(isEnabled ? 1 : 0.4)
+        }
+        .buttonStyle(.plain)
     }
 }
