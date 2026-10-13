@@ -144,6 +144,9 @@ struct StorePanel: View {
     @State private var deleting: DisplayLog?
 
     private var cellHeight: CGFloat { compact ? 38 : (wide ? 56 : 48) }
+    /// 年代の見出しの文字の大きさと幅
+    private var ageFontSize: CGFloat { compact ? 22 : (wide ? 26 : 21) }
+    private var labelWidth: CGFloat { compact ? 86 : (wide ? 96 : 78) }
 
     var body: some View {
         VStack(spacing: compact ? 10 : 12) {
@@ -176,7 +179,7 @@ struct StorePanel: View {
 
             VStack(spacing: compact ? 6 : 8) {
                 HStack(spacing: 8) {
-                    Color.clear.frame(width: 64, height: 1)
+                    Color.clear.frame(width: labelWidth, height: 1)
                     ForEach(Gender.allCases) { g in
                         Label(g.label, systemImage: g.symbol)
                             .font(.subheadline.weight(.heavy))
@@ -187,11 +190,13 @@ struct StorePanel: View {
                 }
                 ForEach(AgeBand.allCases) { a in
                     HStack(spacing: 8) {
+                        // 年配のスタッフでも読みやすいよう、全段同じ大きさの太字で表示
                         Text(a.label)
-                            .font(.subheadline.weight(.bold))
+                            .font(.system(size: ageFontSize, weight: .heavy))
+                            .foregroundStyle(Color.black)
                             .lineLimit(1)
-                            .minimumScaleFactor(0.6)
-                            .frame(width: 64, alignment: .leading)
+                            .minimumScaleFactor(0.9)
+                            .frame(width: labelWidth, alignment: .leading)
                         ForEach(Gender.allCases) { g in
                             CountButton(gender: g, age: a, count: draft.count(g, a), height: cellHeight) {
                                 draft.add(g, a)

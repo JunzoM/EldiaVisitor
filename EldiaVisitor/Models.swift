@@ -87,9 +87,9 @@ enum Gender: String, CaseIterable, Identifiable, Hashable, Codable {
 enum AgeBand: Int, CaseIterable, Identifiable, Hashable, Codable {
     case a10 = 10, a20 = 20, a30 = 30, a40 = 40, a50 = 50, a60 = 60
     var id: Int { rawValue }
-    var label: String { self == .a60 ? "60代以上" : "\(rawValue)代" }
-    var short: String { self == .a60 ? "60代+" : "\(rawValue)代" }
-    var tiny: String { self == .a60 ? "60+" : "\(rawValue)代" }
+    var label: String { self == .a60 ? "60代〜" : "\(rawValue)代" }
+    var short: String { self == .a60 ? "60代〜" : "\(rawValue)代" }
+    var tiny: String { self == .a60 ? "60〜" : "\(rawValue)代" }
 }
 
 struct CountKey: Hashable, Codable {
