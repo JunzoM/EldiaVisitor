@@ -104,7 +104,9 @@ struct LoginView: View {
         } catch {
             if let u = error as? URLError {
                 // 通信エラーは原因を調べやすいようにコードも表示する
-                self.error = "\(u.localizedDescription)（通信エラー \(u.errorCode)）"
+                let ns = u as NSError
+                let stream = ns.userInfo["_kCFStreamErrorCodeKey"].map { " / \($0)" } ?? ""
+                self.error = "\(u.localizedDescription)（通信エラー \(u.errorCode)\(stream)）"
             } else {
                 self.error = error.localizedDescription
             }
