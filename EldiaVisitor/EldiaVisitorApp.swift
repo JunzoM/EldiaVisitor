@@ -102,7 +102,12 @@ struct LoginView: View {
             try await auth.signIn(email: email.trimmingCharacters(in: .whitespaces), password: password)
             error = nil
         } catch {
-            self.error = error.localizedDescription
+            if let u = error as? URLError {
+                // 通信エラーは原因を調べやすいようにコードも表示する
+                self.error = "\(u.localizedDescription)（通信エラー \(u.errorCode)）"
+            } else {
+                self.error = error.localizedDescription
+            }
         }
     }
 }
