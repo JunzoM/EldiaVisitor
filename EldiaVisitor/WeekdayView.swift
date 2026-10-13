@@ -87,6 +87,7 @@ struct WeekdaySections: View {
                 .chartForegroundStyleScale(domain: columns.map(\.title), range: columns.map(\.color))
                 .chartLegend(columns.count > 1 ? .visible : .hidden)
                 .frame(height: 200)
+                InsightBox(text: Insights.weekdayCount(columns))
             }
 
             Card(title: "曜日 × 時間帯", subtitle: "組数（3時間ごと）") {
@@ -100,11 +101,13 @@ struct WeekdaySections: View {
                                 text: { String(Int($0)) },
                                 labelWidth: 22)
                 }
+                InsightBox(text: Insights.weekdayHour(columns))
             }
 
             Card(title: "曜日 × 客層", subtitle: "組数の構成比") {
                 Columns(columns: columns) { col in WeekdaySegmentChart(stats: col.stats) }
                 SegmentLegend()
+                InsightBox(text: Insights.weekdaySegment(columns))
             }
 
             Card(title: "曜日 × 年齢層", subtitle: "人数の構成比（%）") {
@@ -121,6 +124,7 @@ struct WeekdaySections: View {
                                 text: { String(format: "%.0f%%", $0) },
                                 labelWidth: 22)
                 }
+                InsightBox(text: Insights.weekdayAge(columns))
             }
 
             Card(title: "詳細") {

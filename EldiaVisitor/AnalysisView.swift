@@ -153,15 +153,18 @@ struct AnalysisSections: View {
 
             Card(title: "年齢層 × 性別", subtitle: "人数") {
                 Columns(columns: columns) { AgeGenderChart(stats: $0.stats) }
+                InsightBox(text: Insights.ageGender(columns))
             }
 
             Card(title: "客層別 組数", subtitle: "組数に占める割合") {
                 Columns(columns: columns) { SegmentBars(stats: $0.stats) }
+                InsightBox(text: Insights.segment(columns))
                 Note(text: "1組につき客層1つで集計。デリヘルは女性1名を1組として数えます。")
             }
 
             Card(title: "客層 × 年齢層", subtitle: "客層ごとの人数構成（%）") {
                 Columns(columns: columns) { SegmentAgeHeatmap(stats: $0.stats) }
+                InsightBox(text: Insights.segmentAge(columns))
             }
 
             Card(title: "客層別の詳細") {
@@ -171,10 +174,12 @@ struct AnalysisSections: View {
 
             Card(title: "時間帯別 来店組数") {
                 Columns(columns: columns) { HourChart(stats: $0.stats, color: $0.color) }
+                InsightBox(text: Insights.hours(columns))
             }
 
             Card(title: "組の人数") {
                 Columns(columns: columns) { PartyBar(stats: $0.stats) }
+                InsightBox(text: Insights.party(columns))
             }
 
             Card(title: "詳細（人数）") {
@@ -232,6 +237,7 @@ struct KPICard: View {
                     }
                 }
             }
+            InsightBox(text: Insights.overview(columns))
         }
     }
 }
