@@ -128,7 +128,7 @@ final class AuthManager {
         req.setValue(AppConfig.anonKey, forHTTPHeaderField: "apikey")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = body
-        let (data, resp) = try await URLSession.shared.data(for: req)
+        let (data, resp) = try await SupabaseTrust.session.data(for: req)
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
         if code == 400 || code == 401 || code == 403 { throw APIError.badLogin }
         guard (200..<300).contains(code) else { throw APIError.http(code, String(data: data, encoding: .utf8) ?? "") }
@@ -210,7 +210,7 @@ final class API {
             req.setValue("application/json", forHTTPHeaderField: "Accept")
             for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
             req.httpBody = body
-            let (data, resp) = try await URLSession.shared.data(for: req)
+            let (data, resp) = try await SupabaseTrust.session.data(for: req)
             let http = resp as! HTTPURLResponse
             if http.statusCode == 401 && !retried { retried = true; continue }
             guard (200..<300).contains(http.statusCode) else {
