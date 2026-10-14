@@ -237,31 +237,23 @@ struct StorePanel: View {
                             .lineLimit(1)
                     }
                     Spacer()
+                    // 記録が遅れたときだけ使う、来店時刻の小さなボタン（押すと選択肢が出る）
+                    Menu {
+                        ForEach([0, 5, 10, 15], id: \.self) { m in
+                            Button(m == 0 ? "今（通常）" : "\(m)分前に来店") { draft.minutesAgo = m }
+                        }
+                    } label: {
+                        Label(draft.minutesAgo == 0 ? "今" : "\(draft.minutesAgo)分前", systemImage: "clock")
+                            .font(.footnote.weight(.bold))
+                            .foregroundStyle(draft.minutesAgo == 0 ? Palette.sub : Color.white)
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(Capsule().fill(draft.minutesAgo == 0 ? Color(hex: 0xF2F2F7) : Palette.sunday))
+                    }
+                    .accessibilityLabel("来店時刻")
                     HStack(alignment: .firstTextBaseline, spacing: 2) {
                         Text("\(draft.total)")
                             .font(.system(size: 30, weight: .bold)).monospacedDigit()
                         Text("名").font(.subheadline).foregroundStyle(Palette.sub)
-                    }
-                }
-
-                // 記録が遅れたときは来店時刻を戻す
-                HStack(spacing: 6) {
-                    Text("来店時刻").font(.footnote.weight(.bold)).foregroundStyle(Palette.ink2)
-                        .fixedSize()
-                    ForEach([0, 5, 10, 15], id: \.self) { m in
-                        let on = draft.minutesAgo == m
-                        Button { draft.minutesAgo = m } label: {
-                            Text(m == 0 ? "今" : "\(m)分前")
-                                .font(.subheadline.weight(.bold))
-                                .lineLimit(1).minimumScaleFactor(0.7)
-                                .foregroundStyle(on ? Color.white : Palette.ink2)
-                                .frame(maxWidth: .infinity, minHeight: compact ? 32 : 38)
-                                .background(Capsule().fill(on ? Palette.ink2 : Color.white))
-                                .overlay(Capsule().strokeBorder(on ? Palette.ink2 : Color(hex: 0xD1D1D6), lineWidth: 1.5))
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(m == 0 ? "来店時刻 今" : "来店時刻 \(m)分前")
-                        .accessibilityAddTraits(on ? .isSelected : [])
                     }
                 }
 
