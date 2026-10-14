@@ -141,19 +141,21 @@ enum Insights {
 
     // MARK: 曜日別
 
-    private static func dayName(_ d: Int) -> String { weekdayLabels[d - 1] + "曜" }
+    private static func dayName(_ d: Int) -> String { d <= 7 ? weekdayLabels[d - 1] + "曜" : dayTypeLabel(d) }
 
     static func weekdayCount(_ cols: [StatColumn]) -> String? {
         let cs = active(cols)
         guard !cs.isEmpty else { return nil }
         let info = cs.map { c -> (String, Int, Double) in
-            let per = (1...7).map { d -> Double in
-                let days = max(c.stats.dayCount(dow: d), 1)
-                return Double(c.stats.filter { $0.dow == d }.groups) / Double(days)
+            // 1日あたりの組数（その期間に日がない種類は除く）
+            var per: [Int: Double] = [:]
+            for t in dayTypes where c.stats.days(t) > 0 {
+                per[t] = Double(c.stats.filter { $0.dtype == t }.groups) / Double(c.stats.days(t))
             }
-            let best = per.indices.max { per[$0] < per[$1] } ?? 0
-            let weekdayAvg = per[0..<5].reduce(0, +) / 5
-            return (c.title, best + 1, weekdayAvg > 0 ? per[best] / weekdayAvg : 0)
+            let best = per.max { $0.value < $1.value }?.key ?? 6
+            let weekdays = (1...5).compactMap { per[$0] }
+            let weekdayAvg = weekdays.isEmpty ? 0 : weekdays.reduce(0, +) / Double(weekdays.count)
+            return (c.title, best, weekdayAvg > 0 ? (per[best] ?? 0) / weekdayAvg : 0)
         }
         if info.count == 2, info[0].1 == info[1].1 {
             return finish("両店舗とも\(dayName(info[0].1))が最多（1日あたり平日平均の\(info[0].0) \(String(format: "%.1f", info[0].2))倍・\(info[1].0) \(String(format: "%.1f", info[1].2))倍）。", cols)
@@ -167,8 +169,8 @@ enum Insights {
         guard !cs.isEmpty else { return nil }
         let parts = cs.map { c -> String in
             var best = (1, 0, -1)
-            for d in 1...7 { for b in 0..<8 {
-                let v = c.stats.filter { $0.dow == d && $0.hour / 3 == b }.groups
+            for d in dayTypes { for b in 0..<8 {
+                let v = c.stats.filter { $0.dtype == d && $0.hour / 3 == b }.groups
                 if v > best.2 { best = (d, b, v) }
             } }
             return (cols.count > 1 ? "\(c.title)は" : "") + "\(dayName(best.0))の\(best.1 * 3)〜\(best.1 * 3 + 3)時が最も混雑（\(best.2)組）"
@@ -180,7 +182,7 @@ enum Insights {
         let cs = active(cols)
         guard !cs.isEmpty else { return nil }
         let parts = cs.compactMap { c -> String? in
-            let wkEnd = c.stats.filter { $0.dow >= 6 }, wkDay = c.stats.filter { $0.dow <= 5 }
+            let wkEnd = c.stats.filter { $0.dtype >= 6 }, wkDay = c.stats.filter { $0.dtype <= 5 }
             guard wkEnd.groups > 0, wkDay.groups > 0 else { return nil }
             var up: [String] = [], down: [String] = []
             for seg in Segment.allCases where seg != .general {
@@ -188,7 +190,7 @@ enum Insights {
                 if e - d >= 2 { up.append(seg.label) } else if d - e >= 2 { down.append(seg.label) }
             }
             var t: [String] = []
-            if !up.isEmpty { t.append("土日は\(up.joined(separator: "・"))が増え") }
+            if !up.isEmpty { t.append("土日・祝日は\(up.joined(separator: "・"))が増え") }
             if !down.isEmpty { t.append("平日は\(down.joined(separator: "・"))の比率が高い") }
             let body = t.isEmpty ? "平日と土日で客層の差は小さい" : t.joined(separator: "、")
             return (cols.count > 1 ? "\(c.title)は" : "") + body
@@ -201,11 +203,11 @@ enum Insights {
         let cs = active(cols)
         guard !cs.isEmpty else { return nil }
         let parts = cs.compactMap { c -> String? in
-            let late = c.stats.filter { $0.dow == 5 || $0.dow == 6 }, early = c.stats.filter { $0.dow <= 4 }
+            let late = c.stats.filter { [5, 6, 8].contains($0.dtype) }, early = c.stats.filter { $0.dtype <= 4 }
             guard late.people > 0, early.people > 0 else { return nil }
             let l20 = share(late.people(.a20), late.people), e20 = share(early.people(.a20), early.people)
             let e3040 = share(early.people(.a30) + early.people(.a40), early.people)
-            return (cols.count > 1 ? "\(c.title)は" : "") + "金・土は20代が\(p(l20))（月〜木は\(p(e20))）、月〜木は30〜40代が\(p(e3040))"
+            return (cols.count > 1 ? "\(c.title)は" : "") + "金・土・祝前日は20代が\(p(l20))（月〜木は\(p(e20))）、月〜木は30〜40代が\(p(e3040))"
         }
         guard !parts.isEmpty else { return nil }
         return finish(parts.joined(separator: "。") + "。", cols)

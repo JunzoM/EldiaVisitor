@@ -3,6 +3,8 @@ import SwiftUI
 // MARK: - 接続先
 
 enum AppConfig {
+    /// 営業日の区切り（この時刻で日付が変わる。分析・「今日」の件数に使う。サーバー側の関数と合わせること）
+    static let businessDayStartHour = 5
     static let supabaseURL = URL(string: "https://mqapkwlxlunyvsuhiujb.supabase.co")!
     /// 公開用キー（RLS により共通ログインしたスタッフのみ読み書きできる）
     static let anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xYXBrd2x4bHVueXZzdWhpdWpiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzNTQyMzUsImV4cCI6MjA4ODkzMDIzNX0.3BCcAtsfMHHXemd-AYYfdIhLoWyZJ1crRl5jNrsReWk"
@@ -181,6 +183,8 @@ struct Draft {
     var counts: [CountKey: Int] = [:]
     var taps: [CountKey] = []
     var segment: Segment = .general
+    /// 記録が遅れたときに戻す分数（0＝今）
+    var minutesAgo: Int = 0
 
     var total: Int { counts.values.reduce(0, +) }
     var male: Int { counts.filter { $0.key.gender == .m }.values.reduce(0, +) }
@@ -234,7 +238,11 @@ enum JST {
     static let csv = formatter("yyyy/MM/dd HH:mm")
     static let fileDate = formatter("yyyyMMdd")
 
-    static func startOfToday(_ now: Date = Date()) -> Date { calendar.startOfDay(for: now) }
+    /// 今の営業日の開始時刻（朝5時区切り。深夜0〜5時は前日の営業日）
+    static func startOfToday(_ now: Date = Date()) -> Date {
+        let h = Double(AppConfig.businessDayStartHour) * 3600
+        return calendar.startOfDay(for: now.addingTimeInterval(-h)).addingTimeInterval(h)
+    }
 }
 
 enum ISODate {
@@ -289,8 +297,14 @@ enum ISODate {
 
 let weekdayLabels = ["月", "火", "水", "木", "金", "土", "日"]
 
+/// 営業日の種類：1〜7＝月〜日、8＝祝前日、9＝祝日
+let dayTypes = Array(1...9)
+func dayTypeLabel(_ t: Int) -> String {
+    t == 8 ? "祝前日" : (t == 9 ? "祝日" : weekdayLabels[t - 1])
+}
+
 func weekdayColor(_ dow: Int) -> Color {
-    dow == 6 ? Palette.saturday : (dow == 7 ? Palette.sunday : Color.primary)
+    (dow == 6 || dow == 8) ? Palette.saturday : ((dow == 7 || dow == 9) ? Palette.sunday : Color.primary)
 }
 
 // MARK: - ボタンの見た目（iOS 26 以上は Liquid Glass、iPadOS 17 などは通常のボタン）

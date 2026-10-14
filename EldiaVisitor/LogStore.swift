@@ -62,7 +62,8 @@ final class LogStore {
 
     func record(store: StoreID, draft: Draft) {
         guard draft.canRecord else { return }
-        let log = VisitorLog(store: store, segment: draft.segment, counts: draft.counts)
+        let log = VisitorLog(store: store, segment: draft.segment, counts: draft.counts,
+                             at: Date().addingTimeInterval(-Double(draft.minutesAgo) * 60))
         pending.append(log)
         savePending()
         Task { await self.syncNow() }

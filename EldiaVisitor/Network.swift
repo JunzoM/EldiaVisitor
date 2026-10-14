@@ -151,6 +151,8 @@ struct StatRow: Codable {
     let store: StoreID
     let segment: Segment
     let dow: Int
+    /// 営業日の種類（1〜7＝月〜日、8＝祝前日、9＝祝日）
+    let dtype: Int
     let hour: Int
     let party: Int
     let groups: Int
@@ -270,6 +272,16 @@ final class API {
         let body = try JSONSerialization.data(withJSONObject: ["p_from": ISODate.string(from), "p_to": ISODate.string(to)])
         let (data, _) = try await send(path: "rest/v1/rpc/visitor_stats", method: "POST", body: body)
         return try JSONDecoder().decode([StatRow].self, from: data)
+    }
+
+    /// 期間内（今日まで）の営業日の種類ごとの日数
+    func dayCounts(from: Date, to: Date) async throws -> [Int: Int] {
+        let body = try JSONSerialization.data(withJSONObject: ["p_from": ISODate.string(from), "p_to": ISODate.string(to)])
+        let (data, _) = try await send(path: "rest/v1/rpc/visitor_day_counts", method: "POST", body: body)
+        let raw = try JSONDecoder().decode([String: Int].self, from: data)
+        var out: [Int: Int] = [:]
+        for (k, v) in raw { if let t = Int(k) { out[t] = v } }
+        return out
     }
 
     /// CSV 用：期間内の記録をすべて取得

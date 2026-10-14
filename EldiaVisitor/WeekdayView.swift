@@ -48,8 +48,9 @@ struct WeekdayView: View {
         defer { loading = false }
         let r = period.range()
         do {
-            let rows = try await logs.api.stats(from: r.from, to: r.to)
-            stats = Stats(rows: rows, from: r.from, to: r.to)
+            async let rows = logs.api.stats(from: r.from, to: r.to)
+            async let days = logs.api.dayCounts(from: r.from, to: r.to)
+            stats = Stats(rows: try await rows, from: r.from, to: r.to, dayCounts: try await days)
             error = nil
         } catch {
             self.error = "集計を取得できませんでした：\(error.localizedDescription)"
@@ -57,17 +58,18 @@ struct WeekdayView: View {
     }
 }
 
-private let dows = Array(1...7)
 private let blockLabels = ["0時", "3時", "6時", "9時", "12時", "15時", "18時", "21時"]
 
 struct WeekdaySections: View {
     let columns: [StatColumn]
 
     var body: some View {
+        // 月〜日は常に表示。祝前日・祝日はこの期間にある場合だけ表示
+        let types = dayTypes.filter { t in t <= 7 || columns.contains { $0.stats.days(t) > 0 } }
         // 時間帯の濃さは店舗間で同じ目盛りにそろえる
         let blockValues: [[[Double]]] = columns.map { col in
-            dows.map { d in
-                (0..<8).map { b in Double(col.stats.filter { $0.dow == d && $0.hour / 3 == b }.groups) }
+            types.map { d in
+                (0..<8).map { b in Double(col.stats.filter { $0.dtype == d && $0.hour / 3 == b }.groups) }
             }
         }
         let blockMax = blockValues.flatMap { $0.flatMap { $0 } }.max() ?? 1
@@ -76,9 +78,9 @@ struct WeekdaySections: View {
             Card(title: "曜日別 組数") {
                 Chart {
                     ForEach(columns) { col in
-                        ForEach(dows, id: \.self) { d in
-                            BarMark(x: .value("曜日", weekdayLabels[d - 1]),
-                                    y: .value("組数", col.stats.filter { $0.dow == d }.groups))
+                        ForEach(types, id: \.self) { d in
+                            BarMark(x: .value("曜日", dayTypeLabel(d)),
+                                    y: .value("組数", col.stats.filter { $0.dtype == d }.groups))
                                 .foregroundStyle(by: .value("店舗", col.title))
                                 .position(by: .value("店舗", col.title))
                         }
@@ -87,49 +89,50 @@ struct WeekdaySections: View {
                 .chartForegroundStyleScale(domain: columns.map(\.title), range: columns.map(\.color))
                 .chartLegend(columns.count > 1 ? .visible : .hidden)
                 .frame(height: 200)
+                Note(text: "朝5時で日付を区切って集計（深夜0〜5時は前日扱い）。祝前日＝翌日が祝日の日（連休前の日曜も含む）、祝日＝翌日が平日の祝日。")
                 InsightBox(text: Insights.weekdayCount(columns))
             }
 
             Card(title: "曜日 × 時間帯", subtitle: "組数（3時間ごと）") {
                 Columns(columns: columns) { col in
                     let i = columns.firstIndex { $0.id == col.id } ?? 0
-                    HeatmapView(rowLabels: weekdayLabels,
-                                rowColors: dows.map(weekdayColor),
+                    HeatmapView(rowLabels: types.map(dayTypeLabel),
+                                rowColors: types.map(weekdayColor),
                                 colLabels: blockLabels,
                                 values: blockValues[i],
                                 maxValue: max(blockMax, 1),
                                 text: { String(Int($0)) },
-                                labelWidth: 22)
+                                labelWidth: 46)
                 }
                 InsightBox(text: Insights.weekdayHour(columns))
             }
 
             Card(title: "曜日 × 客層", subtitle: "組数の構成比") {
-                Columns(columns: columns) { col in WeekdaySegmentChart(stats: col.stats) }
+                Columns(columns: columns) { col in WeekdaySegmentChart(stats: col.stats, types: types) }
                 SegmentLegend()
                 InsightBox(text: Insights.weekdaySegment(columns))
             }
 
             Card(title: "曜日 × 年齢層", subtitle: "人数の構成比（%）") {
                 Columns(columns: columns) { col in
-                    let values: [[Double]] = dows.map { d in
-                        let s = col.stats.filter { $0.dow == d }
+                    let values: [[Double]] = types.map { d in
+                        let s = col.stats.filter { $0.dtype == d }
                         return AgeBand.allCases.map { a in s.people > 0 ? Double(s.people(a)) / Double(s.people) * 100 : 0 }
                     }
-                    HeatmapView(rowLabels: weekdayLabels,
-                                rowColors: dows.map(weekdayColor),
+                    HeatmapView(rowLabels: types.map(dayTypeLabel),
+                                rowColors: types.map(weekdayColor),
                                 colLabels: AgeBand.allCases.map(\.tiny),
                                 values: values,
                                 maxValue: 40,
                                 text: { String(format: "%.0f%%", $0) },
-                                labelWidth: 22)
+                                labelWidth: 46)
                 }
                 InsightBox(text: Insights.weekdayAge(columns))
             }
 
             Card(title: "詳細") {
-                Columns(columns: columns) { col in WeekdayTable(stats: col.stats, showTop: columns.count == 1) }
-                Note(text: "1日平均＝組数÷その期間（今日まで）の曜日の日数／平均＝1組あたりの人数")
+                Columns(columns: columns) { col in WeekdayTable(stats: col.stats, showTop: columns.count == 1, types: types) }
+                Note(text: "1日平均＝組数÷その期間（今日まで）の日数／平均＝1組あたりの人数")
             }
         }
     }
@@ -137,14 +140,15 @@ struct WeekdaySections: View {
 
 struct WeekdaySegmentChart: View {
     let stats: Stats
+    let types: [Int]
     var body: some View {
         Chart {
-            ForEach(dows, id: \.self) { d in
-                let ds = stats.filter { $0.dow == d }
+            ForEach(types, id: \.self) { d in
+                let ds = stats.filter { $0.dtype == d }
                 let total = ds.groups
                 ForEach(Segment.allCases) { seg in
                     BarMark(x: .value("割合", total > 0 ? Double(ds.groups(seg)) / Double(total) * 100 : 0),
-                            y: .value("曜日", weekdayLabels[d - 1]))
+                            y: .value("曜日", dayTypeLabel(d)))
                         .foregroundStyle(by: .value("客層", seg.label))
                 }
             }
@@ -178,6 +182,7 @@ struct SegmentLegend: View {
 struct WeekdayTable: View {
     let stats: Stats
     let showTop: Bool
+    let types: [Int]
 
     var body: some View {
         Grid(alignment: .trailing, horizontalSpacing: 10, verticalSpacing: 9) {
@@ -188,11 +193,11 @@ struct WeekdayTable: View {
             }
             .font(.caption2.weight(.bold)).foregroundStyle(Palette.sub)
             Divider()
-            ForEach(dows, id: \.self) { d in
-                let s = stats.filter { $0.dow == d }
-                let days = stats.dayCount(dow: d)
+            ForEach(types, id: \.self) { d in
+                let s = stats.filter { $0.dtype == d }
+                let days = stats.days(d)
                 GridRow {
-                    Text(weekdayLabels[d - 1]).font(.footnote.weight(.heavy)).foregroundStyle(weekdayColor(d))
+                    Text(dayTypeLabel(d)).font(.footnote.weight(.heavy)).foregroundStyle(weekdayColor(d))
                     Text("\(s.groups)")
                     Text("\(s.people)")
                     Text(days > 0 ? String(format: "%.1f", Double(s.groups) / Double(days)) : "—")

@@ -15,24 +15,25 @@ enum Period: String, CaseIterable, Identifiable {
         }
     }
 
+    /// 期間（営業日＝朝5時区切りで区切る）
     func range(now: Date = Date()) -> (from: Date, to: Date) {
         let cal = JST.calendar
+        let h = Double(AppConfig.businessDayStartHour) * 3600
+        let b = now.addingTimeInterval(-h)
+        func shift(_ i: DateInterval) -> (from: Date, to: Date) { (i.start.addingTimeInterval(h), i.end.addingTimeInterval(h)) }
         switch self {
         case .today:
-            let s = cal.startOfDay(for: now)
-            return (s, cal.date(byAdding: .day, value: 1, to: s)!)
+            let s = cal.startOfDay(for: b)
+            return shift(DateInterval(start: s, end: cal.date(byAdding: .day, value: 1, to: s)!))
         case .week:
-            let i = cal.dateInterval(of: .weekOfYear, for: now)!
-            return (i.start, i.end)
+            return shift(cal.dateInterval(of: .weekOfYear, for: b)!)
         case .month:
-            let i = cal.dateInterval(of: .month, for: now)!
-            return (i.start, i.end)
+            return shift(cal.dateInterval(of: .month, for: b)!)
         case .quarter:
-            let i = cal.dateInterval(of: .month, for: now)!
-            return (cal.date(byAdding: .month, value: -2, to: i.start)!, i.end)
+            let i = cal.dateInterval(of: .month, for: b)!
+            return shift(DateInterval(start: cal.date(byAdding: .month, value: -2, to: i.start)!, end: i.end))
         case .year:
-            let i = cal.dateInterval(of: .year, for: now)!
-            return (i.start, i.end)
+            return shift(cal.dateInterval(of: .year, for: b)!)
         }
     }
 }
@@ -43,8 +44,9 @@ struct Stats {
     let rows: [StatRow]
     let from: Date
     let to: Date
+    var dayCounts: [Int: Int] = [:]
 
-    func filter(_ keep: (StatRow) -> Bool) -> Stats { Stats(rows: rows.filter(keep), from: from, to: to) }
+    func filter(_ keep: (StatRow) -> Bool) -> Stats { Stats(rows: rows.filter(keep), from: from, to: to, dayCounts: dayCounts) }
     func only(_ store: StoreID?) -> Stats { store.map { s in filter { $0.store == s } } ?? self }
 
     var groups: Int { rows.reduce(0) { $0 + $1.groups } }
@@ -56,19 +58,8 @@ struct Stats {
 
     var avgParty: Double { groups == 0 ? 0 : Double(people) / Double(groups) }
 
-    /// 各曜日（1=月〜7=日）がこの期間（今日まで）に何日あるか
-    func dayCount(dow: Int, now: Date = Date()) -> Int {
-        let cal = JST.calendar
-        var d = cal.startOfDay(for: from)
-        let end = min(to, now)
-        var n = 0
-        while d < end {
-            let wd = cal.component(.weekday, from: d) // 1=日
-            if (wd + 5) % 7 + 1 == dow { n += 1 }
-            d = cal.date(byAdding: .day, value: 1, to: d)!
-        }
-        return n
-    }
+    /// 営業日の種類（1〜7＝月〜日、8＝祝前日、9＝祝日）ごとの、この期間（今日まで）の日数
+    func days(_ type: Int) -> Int { dayCounts[type] ?? 0 }
 
     // 文字列にした指標
     var peakHour: String {
@@ -252,7 +243,7 @@ enum CSVExport {
             row += ["\(l.male)", "\(l.female)", "\(l.total)"]
             lines.append(row.joined(separator: ","))
         }
-        let last = JST.calendar.date(byAdding: .second, value: -1, to: to) ?? to
+        let last = to.addingTimeInterval(-Double(AppConfig.businessDayStartHour) * 3600 - 1)
         let name = "来店記録_\(JST.fileDate.string(from: from))-\(JST.fileDate.string(from: last)).csv"
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
         // Excel で文字化けしないよう BOM 付き UTF-8

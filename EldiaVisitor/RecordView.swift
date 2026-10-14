@@ -229,7 +229,9 @@ struct StorePanel: View {
 
                 HStack(alignment: .center) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("この組").font(.caption.weight(.bold)).foregroundStyle(Palette.sub)
+                        Text(draft.minutesAgo > 0 ? "この組（\(draft.minutesAgo)分前の来店として記録）" : "この組")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(draft.minutesAgo > 0 ? Palette.sunday : Palette.sub)
                         Text(draft.isEmpty ? "タップして人数を追加" : draft.summary)
                             .font(.subheadline.weight(.semibold))
                             .lineLimit(1)
@@ -242,6 +244,27 @@ struct StorePanel: View {
                     }
                 }
 
+                // 記録が遅れたときは来店時刻を戻す
+                HStack(spacing: 6) {
+                    Text("来店時刻").font(.footnote.weight(.bold)).foregroundStyle(Palette.ink2)
+                        .fixedSize()
+                    ForEach([0, 5, 10, 15], id: \.self) { m in
+                        let on = draft.minutesAgo == m
+                        Button { draft.minutesAgo = m } label: {
+                            Text(m == 0 ? "今" : "\(m)分前")
+                                .font(.subheadline.weight(.bold))
+                                .lineLimit(1).minimumScaleFactor(0.7)
+                                .foregroundStyle(on ? Color.white : Palette.ink2)
+                                .frame(maxWidth: .infinity, minHeight: compact ? 32 : 38)
+                                .background(Capsule().fill(on ? Palette.ink2 : Color.white))
+                                .overlay(Capsule().strokeBorder(on ? Palette.ink2 : Color(hex: 0xD1D1D6), lineWidth: 1.5))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(m == 0 ? "来店時刻 今" : "来店時刻 \(m)分前")
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                    }
+                }
+
                 // 一つ戻す：クリア：記録する ＝ 1：1：2（どの iOS でも同じ見た目の自前ボタン）
                 HStack(spacing: 8) {
                     HStack(spacing: 8) {
@@ -250,7 +273,7 @@ struct StorePanel: View {
                             .disabled(draft.taps.isEmpty)
                         ActionButton(title: "クリア", fill: Color(hex: 0xE9E9EE), foreground: Color.primary,
                                      height: compact ? 40 : 46) { draft.clear() }
-                            .disabled(draft.isEmpty && draft.segment == .general)
+                            .disabled(draft.isEmpty && draft.segment == .general && draft.minutesAgo == 0)
                     }
                     .frame(maxWidth: .infinity)
                     ActionButton(title: wide ? "記録する" : "\(store.label) に記録", fill: store.accent, foreground: .white,
