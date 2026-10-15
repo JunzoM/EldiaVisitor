@@ -145,7 +145,7 @@ enum ManualSearch {
     private static func isMeaningful(_ w: String) -> Bool {
         guard !w.isEmpty, !stopWords.contains(w) else { return false }
         // かな1文字は助詞などなので除く（漢字1文字は残す）
-        if w.count == 1, w.unicodeScalars.allSatisfy { isKana($0) } { return false }
+        if w.count == 1, w.unicodeScalars.allSatisfy({ isKana($0) }) { return false }
         return true
     }
 

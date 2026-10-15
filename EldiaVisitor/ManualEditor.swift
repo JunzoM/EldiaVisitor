@@ -331,8 +331,9 @@ struct StepEditorRow: View {
             if uploading {
                 ProgressView("アップロード中…")
             } else {
+                let pickTitle = step.image == nil ? "写真を選ぶ" : "写真を変える"
                 PhotosPicker(selection: $pickerItem, matching: .images) {
-                    Label(step.image == nil ? "写真を選ぶ" : "写真を変える", systemImage: "photo.on.rectangle")
+                    Label(pickTitle, systemImage: "photo.on.rectangle")
                 }
                 .buttonStyle(.bordered)
                 if UIImagePickerController.isSourceTypeAvailable(.camera) {

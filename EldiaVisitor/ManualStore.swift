@@ -246,17 +246,20 @@ final class ManualStore {
         return img
     }
 
-    /// 写真をダウンロードする（token を渡さなければ、その場でログインのトークンを取る）
-    private func downloadImage(_ name: String, token: String? = nil) async -> Data? {
-        let usable: String
-        if let token {
-            usable = token
-        } else if let fresh = try? await auth.accessToken() {
-            usable = fresh
-        } else {
-            return nil
-        }
-        return try? await request("storage/v1/object/authenticated/manual-images/\(name)", token: usable)
+    /// 写真をダウンロードする（その場でログインのトークンを取る）
+    private func downloadImage(_ name: String) async -> Data? {
+        guard let token = try? await auth.accessToken() else { return nil }
+        return await Self.fetchImageData(name, token: token)
+    }
+
+    /// 写真のデータを取得する（失敗したら nil）。画面の処理に依存しないので、並行して呼べる
+    nonisolated private static func fetchImageData(_ name: String, token: String) async -> Data? {
+        var req = SupabaseRequest.make(path: "storage/v1/object/authenticated/manual-images/\(name)",
+                                       method: "GET", bearer: token)
+        req.timeoutInterval = 30
+        guard let (data, resp) = try? await SupabaseTrust.session.data(for: req),
+              let code = (resp as? HTTPURLResponse)?.statusCode, (200..<300).contains(code) else { return nil }
+        return data
     }
 
     /// 回線が切れても見られるように、まだ端末に無い写真を先に保存しておく
@@ -267,9 +270,10 @@ final class ManualStore {
         for batch in Array(missing).chunked(4) {
             await withTaskGroup(of: Void.self) { group in
                 for name in batch {
-                    group.addTask { @MainActor in
-                        if let data = await self.downloadImage(name, token: token) {
-                            try? data.write(to: ManualCache.imageFile(name), options: .atomic)
+                    let file = ManualCache.imageFile(name)
+                    group.addTask {
+                        if let data = await Self.fetchImageData(name, token: token) {
+                            try? data.write(to: file, options: .atomic)
                         }
                     }
                 }
