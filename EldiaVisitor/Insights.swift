@@ -50,10 +50,10 @@ enum Insights {
     // MARK: 年齢層 × 性別
 
     private static func ageGenderOne(_ s: Stats) -> String {
-        var best: (Gender, AgeBand, Int) = (.f, .a20, -1)
-        for g in Gender.allCases { for a in AgeBand.allCases where s.people(g, a) > best.2 { best = (g, a, s.people(g, a)) } }
+        let cells = Gender.allCases.flatMap { g in AgeBand.allCases.map { a in (g, a) } }
+        let leaders = tiedIndices(cells.map { s.people($0.0, $0.1) }).map { "\(cells[$0].0.label)\(cells[$0].1.short)" }
         let young = s.people(.a20) + s.people(.a30)
-        return "\(best.0.label)\(best.1.short)が最多、20〜30代で全体の\(p(percentValue(young, s.people)))"
+        return "\(joinTies(leaders))が最多、20〜30代で全体の\(p(percentValue(young, s.people)))"
     }
 
     static func ageGender(_ cols: [StatColumn]) -> String? {
@@ -90,9 +90,14 @@ enum Insights {
         }
         let s = cs[0].stats
         let nonGeneral = s.groups - s.groups(.general)
-        let top = Segment.nonGeneral.max { s.groups($0) < s.groups($1) }
+        let segs = Segment.nonGeneral
+        let counts = segs.map { s.groups($0) }
         var t = "一般以外の組は全体の\(p(percentValue(nonGeneral, s.groups)))。"
-        if let top, s.groups(top) > 0 { t += "一般以外で最多は\(top.label)（\(p(percentValue(s.groups(top), s.groups)))）。" }
+        if let topCount = counts.max(), topCount > 0 {
+            let tops = tiedIndices(counts).map { segs[$0].label }
+            let share = p(percentValue(topCount, s.groups))
+            t += "一般以外で最多は\(joinTies(tops))（\(tops.count > 1 ? "各" : "")\(share)）。"
+        }
         return finish(t, cols)
     }
 
@@ -119,16 +124,18 @@ enum Insights {
     static func hours(_ cols: [StatColumn]) -> String? {
         let cs = active(cols)
         guard !cs.isEmpty else { return nil }
-        let info = cs.map { c -> (title: String, peak: Int, peakCount: Int, low: Int) in
+        func hoursText(_ hs: [Int]) -> String { joinTies(hs.map(String.init), suffix: "時台") }
+        let info = cs.map { c -> (title: String, peaks: [Int], peakCount: Int, lows: [Int]) in
             let counts = c.stats.hourlyGroups
-            let peak = counts.indices.max { counts[$0] < counts[$1] } ?? 0
-            let low = counts.indices.min { counts[$0] < counts[$1] } ?? 0
-            return (c.title, peak, counts[peak], low)
+            return (c.title, tiedIndices(counts), counts.max() ?? 0, tiedIndices(counts, lowest: true))
         }
-        if info.count == 2, info[0].peak == info[1].peak {
-            return finish("両店舗とも\(info[0].peak)時台がピーク（\(info[0].title) \(info[0].peakCount)組・\(info[1].title) \(info[1].peakCount)組）。", cols)
+        if info.count == 2, info[0].peaks == info[1].peaks {
+            return finish("両店舗とも\(hoursText(info[0].peaks))がピーク（\(info[0].title) \(info[0].peakCount)組・\(info[1].title) \(info[1].peakCount)組）。", cols)
         }
-        let parts = info.map { i in (cols.count > 1 ? "\(i.title)は" : "") + "ピークが\(i.peak)時台（\(i.peakCount)組）、最も少ないのは\(i.low)時台" }
+        let parts = info.map { i in
+            (cols.count > 1 ? "\(i.title)は" : "")
+                + "ピークが\(hoursText(i.peaks))（\(i.peaks.count > 1 ? "各" : "")\(i.peakCount)組）、最も少ないのは\(hoursText(i.lows))"
+        }
         return sentences(parts, cols)
     }
 
@@ -152,22 +159,22 @@ enum Insights {
     static func weekdayCount(_ cols: [StatColumn]) -> String? {
         let cs = active(cols)
         guard !cs.isEmpty else { return nil }
-        let info = cs.map { c -> (title: String, best: Int, ratio: Double) in
+        func daysText(_ ds: [Int]) -> String { joinTies(ds.map(dayName)) }
+        let info = cs.map { c -> (title: String, best: [Int], ratio: Double) in
             let byType = c.stats.split(by: \.dtype)
-            // 1日あたりの組数（その期間に日がない種類は除く）
-            var per: [Int: Double] = [:]
-            for t in dayTypes where c.stats.days(t) > 0 {
-                per[t] = Double(byType[t]?.groups ?? 0) / Double(c.stats.days(t))
-            }
-            let best = per.max { $0.value < $1.value }?.key ?? 6
-            let weekdays = (1...5).compactMap { per[$0] }
+            // 1日あたりの組数（その期間に日がない種類は除く）。曜日の並び順で数える
+            let types = dayTypes.filter { c.stats.days($0) > 0 }
+            let per = types.map { Double(byType[$0]?.groups ?? 0) / Double(c.stats.days($0)) }
+            let best = tiedIndices(per).map { types[$0] }
+            let bestValue = per.max() ?? 0
+            let weekdays = types.indices.filter { types[$0] <= 5 }.map { per[$0] }
             let weekdayAvg = weekdays.isEmpty ? 0 : weekdays.reduce(0, +) / Double(weekdays.count)
-            return (c.title, best, weekdayAvg > 0 ? (per[best] ?? 0) / weekdayAvg : 0)
+            return (c.title, best.isEmpty ? [6] : best, weekdayAvg > 0 ? bestValue / weekdayAvg : 0)
         }
         if info.count == 2, info[0].best == info[1].best {
-            return finish("両店舗とも\(dayName(info[0].best))が最多（1日あたり平日平均の\(info[0].title) \(ratio(info[0].ratio))倍・\(info[1].title) \(ratio(info[1].ratio))倍）。", cols)
+            return finish("両店舗とも\(daysText(info[0].best))が最多（1日あたり平日平均の\(info[0].title) \(ratio(info[0].ratio))倍・\(info[1].title) \(ratio(info[1].ratio))倍）。", cols)
         }
-        let parts = info.map { i in (cols.count > 1 ? "\(i.title)は" : "") + "\(dayName(i.best))が最多（1日あたり平日平均の\(ratio(i.ratio))倍）" }
+        let parts = info.map { i in (cols.count > 1 ? "\(i.title)は" : "") + "\(daysText(i.best))が最多（1日あたり平日平均の\(ratio(i.ratio))倍）" }
         return sentences(parts, cols)
     }
 
@@ -176,12 +183,11 @@ enum Insights {
         guard !cs.isEmpty else { return nil }
         let parts = cs.map { c -> String in
             let blocks = c.stats.blockGroups()
-            var best = (1, 0, -1)
-            for d in dayTypes { for b in 0..<8 {
-                let v = blocks[d]?[b] ?? 0
-                if v > best.2 { best = (d, b, v) }
-            } }
-            return subject(c, in: cols) + "\(dayName(best.0))の\(best.1 * 3)〜\(best.1 * 3 + 3)時が最も混雑（\(best.2)組）"
+            let cells = dayTypes.flatMap { d in (0..<8).map { b in (d, b) } }
+            let values = cells.map { blocks[$0.0]?[$0.1] ?? 0 }
+            let best = tiedIndices(values).map { "\(dayName(cells[$0].0))の\(cells[$0].1 * 3)〜\(cells[$0].1 * 3 + 3)時" }
+            let n = values.max() ?? 0
+            return subject(c, in: cols) + "\(joinTies(best))が最も混雑（\(best.count > 1 ? "各" : "")\(n)組）"
         }
         return sentences(parts, cols)
     }

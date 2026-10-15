@@ -46,7 +46,11 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             2>&1 | tee test.log | grep -E "error:|Test Case .* failed|Executed [0-9]+ test|TEST (SUCCEEDED|FAILED)" || true
           grep -E "Executed [0-9]+ tests?" test.log | tail -1 | sed 's/^/::notice title=Tests::/'
+          # Swift Testing（集計のテスト）の件数も残し、1件も動いていなければ失敗にする
+          summary=$(grep -E "Test run with [0-9]+ tests?" test.log | tail -1)
+          echo "::notice title=Swift Testing::${summary:-実行結果が見つかりません}"
           grep -q "TEST SUCCEEDED" test.log
+          echo "$summary" | grep -qE "with [1-9][0-9]* tests?.*passed"
       - name: Concurrency check (manual)
         if: always()
         run: |

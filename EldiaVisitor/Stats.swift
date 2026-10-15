@@ -60,6 +60,30 @@ func percentValue(_ part: Int, _ whole: Int) -> Double {
     whole > 0 ? Double(part) / Double(whole) * 100 : 0
 }
 
+// MARK: 同数の扱い
+// 最多・最少が同数で並んだときは、並び順の先頭だけを出すのではなく、すべてを「・」でつないで出す。
+// 多すぎるときは先頭 limit 件に「ほか」を付ける。
+
+/// 最大（lowest なら最小）の値に並んだ位置をすべて、元の順で返す
+func tiedIndices<T: Comparable>(_ values: [T], lowest: Bool = false) -> [Int] {
+    guard let target = lowest ? values.min() : values.max() else { return [] }
+    return values.indices.filter { values[$0] == target }
+}
+
+/// 同数の名前を「・」でつなぐ（例「21・22時台」「年の差・女子会」「3・4・5時台ほか」）
+func joinTies(_ names: [String], suffix: String = "", limit: Int = 3) -> String {
+    let shown = names.prefix(limit).joined(separator: "・") + suffix
+    return names.count > limit ? shown + "ほか" : shown
+}
+
+/// 年齢層を短くつなぐ（例「30代」「30・40代」「50・60代〜」）
+func joinAges(_ bands: [AgeBand], limit: Int = 2) -> String {
+    if bands.count == 1 { return bands[0].short }
+    let shown = Array(bands.prefix(limit))
+    return joinTies(shown.map { "\($0.rawValue)" }, suffix: shown.last == .a60 ? "代〜" : "代", limit: limit)
+        + (bands.count > limit ? "ほか" : "")
+}
+
 /// サーバー関数 visitor_stats の行をまとめたもの。
 /// 合計・男女×年齢層・時間帯・客層・組の人数は、作るときに1回の走査でまとめて数えておく
 /// （画面やコメントを作るたびに行を何度も絞り込み直さないため）。
@@ -157,18 +181,18 @@ struct Stats {
 
     // MARK: 文字列にした指標
 
+    /// 組数が最多の時間帯（同数なら「21・22時台」）
     var peakHour: String {
         guard groups > 0 else { return "—" }
-        let counts = hourlyGroups
-        let h = counts.indices.max { counts[$0] < counts[$1] } ?? 0
-        return "\(h)時台"
+        return joinTies(tiedIndices(hourlyGroups).map(String.init), suffix: "時台")
     }
 
+    /// 一般以外で組数が最多の客層（同数なら「年の差・女子会」）
     var topNonGeneral: String {
         let segs = Segment.nonGeneral
         let counts = segs.map { groups($0) }
-        guard let i = counts.indices.max(by: { counts[$0] < counts[$1] }), counts[i] > 0 else { return "—" }
-        return segs[i].label
+        guard (counts.max() ?? 0) > 0 else { return "—" }
+        return joinTies(tiedIndices(counts).map { segs[$0].label })
     }
 
     /// 男女比（例「48 : 52」）。人数が0なら「—」
@@ -178,18 +202,19 @@ struct Stats {
         return "\(m)\(separator)\(f)"
     }
 
-    /// 主な層：例「男50代×女20代」「女20代」「男女30代」
+    /// 主な層：例「男50代×女20代」「女20代」「男女30代」「男30・40代」
     var mainLayer: String {
         guard people > 0 else { return "—" }
-        func best(_ g: Gender) -> (AgeBand, Int) {
-            AgeBand.allCases.map { ($0, people(g, $0)) }.max { $0.1 < $1.1 } ?? (.a20, 0)
+        func best(_ g: Gender) -> (ages: [AgeBand], count: Int) {
+            let counts = AgeBand.allCases.map { people(g, $0) }
+            return (tiedIndices(counts).map { AgeBand.allCases[$0] }, counts.max() ?? 0)
         }
         let (ma, mc) = best(.m), (fa, fc) = best(.f)
         let mShare = Double(male) / Double(people), fShare = Double(female) / Double(people)
         if mShare >= 0.2 && fShare >= 0.2 && mc > 0 && fc > 0 {
-            return ma == fa ? "男女\(ma.short)" : "男\(ma.short)×女\(fa.short)"
+            return ma == fa ? "男女\(joinAges(ma))" : "男\(joinAges(ma))×女\(joinAges(fa))"
         }
-        return male >= female ? "男\(ma.short)" : "女\(fa.short)"
+        return male >= female ? "男\(joinAges(ma))" : "女\(joinAges(fa))"
     }
 }
 

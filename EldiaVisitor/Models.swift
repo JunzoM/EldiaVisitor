@@ -249,6 +249,18 @@ struct Draft {
     }
 
     mutating func clear() { self = Draft() }
+
+    /// よく使う組み合わせで中身を置き換える（来店時刻の指定はそのまま。「一つ戻す」で1名ずつ減らせる）
+    mutating func fill(segment: Segment, with source: some AgeGenderCounts) {
+        counts = [:]
+        taps = []
+        for g in Gender.allCases {
+            for a in AgeBand.allCases {
+                for _ in 0..<source.count(g, a) { add(g, a) }
+            }
+        }
+        self.segment = segment
+    }
 }
 
 // MARK: - 日時（日本時間）

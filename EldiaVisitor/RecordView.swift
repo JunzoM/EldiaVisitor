@@ -242,6 +242,7 @@ struct StoreInputCard: View {
 
             VStack(spacing: metrics.sectionSpacing) {
                 AgeGenderGrid(draft: $draft, metrics: metrics)
+                FrequentComboBar(store: store, draft: $draft, compact: metrics.compact)
                 SegmentPicker(draft: $draft, metrics: metrics)
                     .padding(.top, metrics.compact ? 2 : 4)
                 Divider().padding(.vertical, metrics.compact ? 2 : 4)
@@ -327,6 +328,44 @@ struct AgeGenderGrid: View {
                             draft.add(g, a)
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/// よく使う組み合わせ（直近30日で3回以上・上位3つ）。押すと人数と客層がまとめて入る。
+/// 記録がたまるまでは何も表示しない
+struct FrequentComboBar: View {
+    let store: StoreID
+    @Binding var draft: Draft
+    let compact: Bool
+    @Environment(LogStore.self) private var logs
+
+    var body: some View {
+        let combos = logs.frequent[store] ?? []
+        if !combos.isEmpty {
+            HStack(spacing: 6) {
+                Text("よく使う")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Palette.sub)
+                    .fixedSize()
+                ForEach(combos) { c in
+                    Button {
+                        draft.fill(segment: c.segment, with: c)
+                    } label: {
+                        Text(c.label)
+                            .font(.footnote.weight(.bold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+                            .foregroundStyle(Palette.teal)
+                            .padding(.horizontal, 8)
+                            .frame(maxWidth: .infinity, minHeight: compact ? 30 : 34)
+                            .background(Capsule().fill(Color.white))
+                            .overlay(Capsule().strokeBorder(Palette.chipBorder, lineWidth: 1.5))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("よく使う組み合わせ \(c.label) を入れる")
                 }
             }
         }
