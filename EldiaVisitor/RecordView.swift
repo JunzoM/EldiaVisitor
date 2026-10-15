@@ -81,7 +81,7 @@ struct RecordView: View {
                         // ツールバーは Label だとアイコンだけになるので、文字を必ず出す自前の見た目にする
                         HStack(spacing: 6) {
                             Image(systemName: "book.pages")
-                            Text(manual.run.map { $0.finished ? "マニュアル" : "マニュアル（続き）" } ?? "マニュアル")
+                            Text(manual.run.map { $0.finished ? "フロントマニュアル" : "フロントマニュアル（続き）" } ?? "フロントマニュアル")
                         }
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(.white)
