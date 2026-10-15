@@ -39,6 +39,10 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             test 2>&1 | tee test.log | grep -E "error:|✘|✔ Test run|Test run with|TEST (SUCCEEDED|FAILED)|Testing failed" || true
           grep -q "TEST SUCCEEDED" test.log
+          # テストが1件も動いていない「成功」を見逃さない。件数は注記として残す
+          summary=$(grep -E "Test run with [0-9]+ tests?" test.log | tail -1)
+          echo "::notice title=Unit tests::${summary:-テストの実行結果が見つかりません}"
+          echo "$summary" | grep -qE "with [1-9][0-9]* tests?.*passed"
       - name: Check Info.plist
         run: |
           plist=$(find ~/Library/Developer/Xcode/DerivedData -path "*Debug-iphonesimulator/EldiaVisitor.app/Info.plist" | head -1)
