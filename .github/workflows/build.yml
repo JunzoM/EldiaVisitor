@@ -45,6 +45,7 @@ jobs:
             -destination "id=$udid" \
             CODE_SIGNING_ALLOWED=NO \
             2>&1 | tee test.log | grep -E "error:|Test Case .* failed|Executed [0-9]+ test|TEST (SUCCEEDED|FAILED)" || true
+          grep -E "Executed [0-9]+ tests?" test.log | tail -1 | sed 's/^/::notice title=Tests::/'
           grep -q "TEST SUCCEEDED" test.log
       - name: Concurrency check (manual)
         if: always()
@@ -57,7 +58,9 @@ jobs:
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
             SWIFT_STRICT_CONCURRENCY=complete \
-            build 2>&1 | grep -E "/(Manual[A-Za-z]*|VoiceSearch)\.swift:[0-9]+:[0-9]+: (warning|error):" | sort -u || true
+            build 2>&1 | grep -E "/(Manual[A-Za-z]*|VoiceSearch)\.swift:[0-9]+:[0-9]+: (warning|error):" | sort -u > concurrency.log || true
+          echo "::notice title=Concurrency::マニュアル部分の警告 $(wc -l < concurrency.log | tr -d ' ') 件"
+          sed -E 's#^.*/(EldiaVisitor/[A-Za-z]+\.swift):([0-9]+):[0-9]+: (warning|error): (.*)$#::warning file=\1,line=\2::\4#' concurrency.log | head -40
       - name: Upload log
         if: always()
         uses: actions/upload-artifact@v4
