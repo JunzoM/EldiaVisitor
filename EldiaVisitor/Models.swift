@@ -5,6 +5,8 @@ import SwiftUI
 enum AppConfig {
     /// 営業日の区切り（この時刻で日付が変わる。分析・「今日」の件数に使う。サーバー側の関数と合わせること）
     static let businessDayStartHour = 5
+    /// 営業日の区切りを秒にしたもの
+    static var businessDayOffset: TimeInterval { Double(businessDayStartHour) * 3600 }
     static let supabaseURL = URL(string: "https://mqapkwlxlunyvsuhiujb.supabase.co")!
     /// 公開用キー（RLS により共通ログインしたスタッフのみ読み書きできる）
     static let anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xYXBrd2x4bHVueXZzdWhpdWpiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzNTQyMzUsImV4cCI6MjA4ODkzMDIzNX0.3BCcAtsfMHHXemd-AYYfdIhLoWyZJ1crRl5jNrsReWk"
@@ -31,6 +33,15 @@ enum Palette {
     static let ink2 = Color(hex: 0x3C3C43)
     static let saturday = Color(hex: 0x2B4A8A)
     static let sunday = Color(hex: 0xB3261E)
+    /// 一つ戻す・クリアなど控えめなボタンの地
+    static let quietFill = Color(hex: 0xE9E9EE)
+    /// 選択されていないチップの枠
+    static let chipBorder = Color(hex: 0xD1D1D6)
+    /// 注意（未送信など）の文字と地
+    static let warnInk = Color(hex: 0x6B4E06)
+    static let warnFill = Color(hex: 0xF5E9C8)
+    /// 未送信の記録のアイコン
+    static let pending = Color(hex: 0x8A6408)
 }
 
 // MARK: - 店舗
@@ -71,6 +82,8 @@ enum Segment: String, CaseIterable, Identifiable, Codable, Hashable {
         case .business: return Color(hex: 0x3C3C43)
         }
     }
+    /// 一般以外の客層（分析で「一般以外」を比べるときに使う）
+    static let nonGeneral: [Segment] = allCases.filter { $0 != .general }
 }
 
 // MARK: - 性別・年齢層
@@ -92,6 +105,8 @@ enum AgeBand: Int, CaseIterable, Identifiable, Hashable, Codable {
     var label: String { self == .a60 ? "60代〜" : "\(rawValue)代" }
     var short: String { self == .a60 ? "60代〜" : "\(rawValue)代" }
     var tiny: String { self == .a60 ? "60〜" : "\(rawValue)代" }
+    /// 0〜5 の並び順（集計の配列の位置に使う）
+    var index: Int { rawValue / 10 - 1 }
 }
 
 struct CountKey: Hashable, Codable {
@@ -111,9 +126,49 @@ func partySummary(_ count: (Gender, AgeBand) -> Int) -> String {
     return parts.joined(separator: "・")
 }
 
+// MARK: - 男女×年齢層の人数（記録1組・集計1行で共通）
+
+/// m10〜m60・f10〜f60 の12項目を持つもの。人数の取り出しと合計をまとめて提供する。
+protocol AgeGenderCounts {
+    var m10: Int { get }
+    var m20: Int { get }
+    var m30: Int { get }
+    var m40: Int { get }
+    var m50: Int { get }
+    var m60: Int { get }
+    var f10: Int { get }
+    var f20: Int { get }
+    var f30: Int { get }
+    var f40: Int { get }
+    var f50: Int { get }
+    var f60: Int { get }
+}
+
+extension AgeGenderCounts {
+    func count(_ g: Gender, _ a: AgeBand) -> Int {
+        switch (g, a) {
+        case (.m, .a10): return m10
+        case (.m, .a20): return m20
+        case (.m, .a30): return m30
+        case (.m, .a40): return m40
+        case (.m, .a50): return m50
+        case (.m, .a60): return m60
+        case (.f, .a10): return f10
+        case (.f, .a20): return f20
+        case (.f, .a30): return f30
+        case (.f, .a40): return f40
+        case (.f, .a50): return f50
+        case (.f, .a60): return f60
+        }
+    }
+    var male: Int { m10 + m20 + m30 + m40 + m50 + m60 }
+    var female: Int { f10 + f20 + f30 + f40 + f50 + f60 }
+    var total: Int { male + female }
+}
+
 // MARK: - 来店記録（1行＝1組）
 
-struct VisitorLog: Codable, Identifiable, Hashable {
+struct VisitorLog: Codable, Identifiable, Hashable, AgeGenderCounts {
     var id: UUID
     var client_id: UUID?
     var store: StoreID
@@ -134,26 +189,6 @@ struct VisitorLog: Codable, Identifiable, Hashable {
         f10 = c(.f, .a10); f20 = c(.f, .a20); f30 = c(.f, .a30); f40 = c(.f, .a40); f50 = c(.f, .a50); f60 = c(.f, .a60)
     }
 
-    func count(_ g: Gender, _ a: AgeBand) -> Int {
-        switch (g, a) {
-        case (.m, .a10): return m10
-        case (.m, .a20): return m20
-        case (.m, .a30): return m30
-        case (.m, .a40): return m40
-        case (.m, .a50): return m50
-        case (.m, .a60): return m60
-        case (.f, .a10): return f10
-        case (.f, .a20): return f20
-        case (.f, .a30): return f30
-        case (.f, .a40): return f40
-        case (.f, .a50): return f50
-        case (.f, .a60): return f60
-        }
-    }
-
-    var male: Int { m10 + m20 + m30 + m40 + m50 + m60 }
-    var female: Int { f10 + f20 + f30 + f40 + f50 + f60 }
-    var total: Int { male + female }
     var summary: String { partySummary { count($0, $1) } }
     var dedupeKey: UUID { client_id ?? id }
 }
@@ -187,14 +222,19 @@ struct Draft {
     var minutesAgo: Int = 0
 
     var total: Int { counts.values.reduce(0, +) }
-    var male: Int { counts.filter { $0.key.gender == .m }.values.reduce(0, +) }
+    var male: Int { counts.reduce(0) { $0 + ($1.key.gender == .m ? $1.value : 0) } }
     var isEmpty: Bool { total == 0 }
     /// デリヘルは女性のみ（男性は「一般」で別に記録する運用）
     var deliHasMale: Bool { segment == .deli && male > 0 }
     var canRecord: Bool { !isEmpty && !deliHasMale }
-    var summary: String { partySummary { counts[CountKey(gender: $0, age: $1)] ?? 0 } }
+    /// 何も入力・変更していない（クリアする必要がない）状態
+    var isPristine: Bool { isEmpty && segment == .general && minutesAgo == 0 }
+    var summary: String { partySummary { count($0, $1) } }
 
     func count(_ g: Gender, _ a: AgeBand) -> Int { counts[CountKey(gender: g, age: a)] ?? 0 }
+
+    /// 記録する来店時刻（「◯分前」を選んでいればその分だけ戻す）
+    func visitDate(now: Date = Date()) -> Date { now.addingTimeInterval(-Double(minutesAgo) * 60) }
 
     mutating func add(_ g: Gender, _ a: AgeBand) {
         let k = CountKey(gender: g, age: a)
@@ -240,7 +280,7 @@ enum JST {
 
     /// 今の営業日の開始時刻（朝5時区切り。深夜0〜5時は前日の営業日）
     static func startOfToday(_ now: Date = Date()) -> Date {
-        let h = Double(AppConfig.businessDayStartHour) * 3600
+        let h = AppConfig.businessDayOffset
         return calendar.startOfDay(for: now.addingTimeInterval(-h)).addingTimeInterval(h)
     }
 }
@@ -262,16 +302,18 @@ enum ISODate {
     static func parse(_ s: String) -> Date? {
         if let d = withFraction.date(from: s) { return d }
         if let d = plain.date(from: s) { return d }
-        // 小数秒が6桁などの場合は3桁に詰めて再挑戦
-        if let dot = s.firstIndex(of: ".") {
-            var end = s.index(after: dot)
-            while end < s.endIndex, s[end].isNumber { end = s.index(after: end) }
-            let frac = s[s.index(after: dot)..<end]
-            let ms = String(frac.prefix(3)).padding(toLength: 3, withPad: "0", startingAt: 0)
-            let trimmed: String = String(s[..<dot]) + "." + ms + String(s[end...])
-            if let d = withFraction.date(from: trimmed) { return d }
-        }
+        if let trimmed = trimmingFraction(s) { return withFraction.date(from: trimmed) }
         return nil
+    }
+
+    /// 小数秒が6桁などの場合は3桁に詰める（ISO8601DateFormatter が読めるようにする）
+    private static func trimmingFraction(_ s: String) -> String? {
+        guard let dot = s.firstIndex(of: ".") else { return nil }
+        var end = s.index(after: dot)
+        while end < s.endIndex, s[end].isNumber { end = s.index(after: end) }
+        let frac = s[s.index(after: dot)..<end]
+        let ms = String(frac.prefix(3)).padding(toLength: 3, withPad: "0", startingAt: 0)
+        return String(s[..<dot]) + "." + ms + String(s[end...])
     }
 
     static let decoder: JSONDecoder = {
@@ -294,6 +336,8 @@ enum ISODate {
         return e
     }()
 }
+
+// MARK: - 曜日・営業日の種類
 
 let weekdayLabels = ["月", "火", "水", "木", "金", "土", "日"]
 

@@ -271,15 +271,16 @@ final class ManualStore {
                          contentType: String = "application/json",
                          headers: [String: String] = [:],
                          token: String) async throws -> Data {
-        let req = SupabaseRequest.make(path, method: method, query: query, body: body, token: token,
-                                       contentType: contentType, headers: headers, timeout: 30)
+        var req = SupabaseRequest.make(path: path, method: method, query: query, body: body, bearer: token,
+                                       headers: headers.merging(["Content-Type": contentType]) { $1 })
+        req.timeoutInterval = 30
         let (data, resp) = try await SupabaseTrust.session.data(for: req)
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(code) else {
             if code == 401 || code == 403, adminSession != nil || sessionIsAdmin, method != "GET" {
                 throw ManualError.notAdmin
             }
-            throw APIError.http(code, String(data: data, encoding: .utf8) ?? "")
+            throw APIError.http(code, SupabaseRequest.bodyText(data))
         }
         return data
     }

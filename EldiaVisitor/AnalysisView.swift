@@ -1,8 +1,19 @@
 import SwiftUI
 import Charts
 
-/// 分析。iPad は MODERN / LUXURY を左右に並べて比較、iPhone は店舗で絞り込み。
-struct AnalysisView: View {
+// MARK: - 分析・曜日別で共通の画面の枠
+
+/// 期間の切り替え・店舗の絞り込み・読み込み・エラー表示をまとめた枠。
+/// iPad は2店舗を左右に並べて比較、iPhone は店舗で絞り込む。
+struct StatsScreen<Sections: View, Footer: View>: View {
+    let periods: [Period]
+    let pickerWidth: CGFloat
+    let title: (_ wide: Bool) -> String
+    /// 曜日別のように「期間内の日数」も必要なときは true
+    var needsDayCounts: Bool = false
+    @ViewBuilder let sections: ([StatColumn]) -> Sections
+    @ViewBuilder let footer: (_ period: Period, _ store: StoreID?) -> Footer
+
     @Environment(LogStore.self) private var logs
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var period: Period = .month
@@ -17,37 +28,27 @@ struct AnalysisView: View {
         ScrollView {
             VStack(spacing: 14) {
                 Picker("期間", selection: $period) {
-                    ForEach([Period.today, .week, .month, .year]) { Text($0.label).tag($0) }
+                    ForEach(periods) { Text($0.label).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: wide ? 440 : .infinity)
+                .frame(maxWidth: wide ? pickerWidth : .infinity)
 
                 if !wide { StoreFilterBar(selection: $storeFilter) }
                 if let error { ErrorBanner(text: error) }
 
                 if let stats {
-                    let cols = makeColumns(stats, wide: wide, filter: storeFilter)
-                    AnalysisSections(columns: cols)
+                    sections(makeColumns(stats, wide: wide, filter: storeFilter))
                 } else if loading {
                     ProgressView().padding(40)
                 }
 
-                HStack(spacing: 10) {
-                    CSVButton(period: period, store: wide ? nil : storeFilter)
-                    NavigationLink {
-                        WeekdayView()
-                    } label: {
-                        Label("曜日別を見る", systemImage: "calendar").frame(maxWidth: .infinity, minHeight: 36)
-                    }
-                    .glassButton()
-                }
-                .controlSize(.large)
+                footer(period, wide ? nil : storeFilter)
             }
             .padding(.horizontal, wide ? 20 : 16)
             .padding(.bottom, 28)
         }
         .background(Palette.ground)
-        .navigationTitle(wide ? "店舗比較" : "分析")
+        .navigationTitle(title(wide))
         .task(id: period) { await load() }
         .refreshable { await load() }
     }
@@ -57,12 +58,42 @@ struct AnalysisView: View {
         defer { loading = false }
         let r = period.range()
         do {
-            let rows = try await logs.api.stats(from: r.from, to: r.to)
-            stats = Stats(rows: rows, from: r.from, to: r.to)
+            if needsDayCounts {
+                async let rows = logs.api.stats(from: r.from, to: r.to)
+                async let days = logs.api.dayCounts(from: r.from, to: r.to)
+                stats = Stats(rows: try await rows, from: r.from, to: r.to, dayCounts: try await days)
+            } else {
+                let rows = try await logs.api.stats(from: r.from, to: r.to)
+                stats = Stats(rows: rows, from: r.from, to: r.to)
+            }
             error = nil
         } catch {
             self.error = "集計を取得できませんでした：\(error.localizedDescription)"
         }
+    }
+}
+
+// MARK: - 分析画面
+
+/// 分析。iPad は MODERN / LUXURY を左右に並べて比較、iPhone は店舗で絞り込み。
+struct AnalysisView: View {
+    var body: some View {
+        StatsScreen(periods: [.today, .week, .month, .year],
+                    pickerWidth: 440,
+                    title: { $0 ? "店舗比較" : "分析" },
+                    sections: { AnalysisSections(columns: $0) },
+                    footer: { period, store in
+                        HStack(spacing: 10) {
+                            CSVButton(period: period, store: store)
+                            NavigationLink {
+                                WeekdayView()
+                            } label: {
+                                Label("曜日別を見る", systemImage: "calendar").frame(maxWidth: .infinity, minHeight: 36)
+                            }
+                            .glassButton()
+                        }
+                        .controlSize(.large)
+                    })
     }
 }
 
@@ -203,10 +234,8 @@ struct KPICard: View {
             Item(id: "来店組数", values: each { "\($0.groups)組" }),
             Item(id: "来店人数", values: each { "\($0.people)名" }),
             Item(id: "平均人数", values: each { String(format: "%.2f名/組", $0.avgParty) }),
-            Item(id: "男女比（男:女）", values: each { s in
-                s.people == 0 ? "—" : "\(Int((Double(s.male) / Double(s.people) * 100).rounded())) : \(Int((Double(s.female) / Double(s.people) * 100).rounded()))"
-            }),
-            Item(id: "1名組の割合", values: each { pct($0.filter { $0.party == 1 }.groups, $0.groups) }),
+            Item(id: "男女比（男:女）", values: each { $0.genderRatio(separator: " : ") }),
+            Item(id: "1名組の割合", values: each { pct($0.partyGroups[0], $0.groups) }),
             Item(id: "一般以外の割合", values: each { pct($0.groups - $0.groups(.general), $0.groups) }),
             Item(id: "一般以外で最多", values: each { $0.topNonGeneral }),
             Item(id: "ピーク時間帯", values: each { $0.peakHour })
@@ -248,11 +277,12 @@ struct AgeGenderChart: View {
         Chart {
             ForEach(AgeBand.allCases) { a in
                 ForEach(Gender.allCases) { g in
-                    BarMark(x: .value("人数", stats.people(g, a)), y: .value("年齢層", a.short))
+                    let n = stats.people(g, a)
+                    BarMark(x: .value("人数", n), y: .value("年齢層", a.short))
                         .foregroundStyle(by: .value("性別", g.label))
                         .position(by: .value("性別", g.label))
                         .annotation(position: .trailing, spacing: 2) {
-                            Text("\(stats.people(g, a))").font(.system(size: 10)).foregroundStyle(Palette.ink2)
+                            Text("\(n)").font(.system(size: 10)).foregroundStyle(Palette.ink2)
                         }
                 }
             }
@@ -290,14 +320,10 @@ struct SegmentBars: View {
 struct SegmentAgeHeatmap: View {
     let stats: Stats
     var body: some View {
-        let values: [[Double]] = Segment.allCases.map { seg in
-            let s = stats.filter { $0.segment == seg }
-            let p = s.people
-            return AgeBand.allCases.map { a in p > 0 ? Double(s.people(a)) / Double(p) * 100 : 0 }
-        }
+        let bySegment = stats.split(by: \.segment)
         HeatmapView(rowLabels: Segment.allCases.map(\.label),
                     colLabels: AgeBand.allCases.map(\.tiny),
-                    values: values,
+                    values: Segment.allCases.map { (bySegment[$0] ?? stats.empty).ageShares },
                     maxValue: 55,
                     text: { String(format: "%.0f%%", $0) },
                     labelWidth: 74)
@@ -307,6 +333,7 @@ struct SegmentAgeHeatmap: View {
 struct SegmentDetailTable: View {
     let stats: Stats
     var body: some View {
+        let bySegment = stats.split(by: \.segment)
         Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 9) {
             GridRow {
                 Text("客層")
@@ -319,13 +346,12 @@ struct SegmentDetailTable: View {
             .foregroundStyle(Palette.sub)
             Divider()
             ForEach(Segment.allCases) { seg in
-                let s = stats.filter { $0.segment == seg }
+                let s = bySegment[seg] ?? stats.empty
                 GridRow {
                     Text(seg.label).font(.footnote.weight(.bold)).lineLimit(1).minimumScaleFactor(0.7)
                     Text("\(s.groups)").monospacedDigit()
                     Text(s.groups > 0 ? String(format: "%.1f", s.avgParty) : "—").monospacedDigit()
-                    Text(s.people > 0 ? "\(Int((Double(s.male) / Double(s.people) * 100).rounded())):\(Int((Double(s.female) / Double(s.people) * 100).rounded()))" : "—")
-                        .monospacedDigit()
+                    Text(s.genderRatio(separator: ":")).monospacedDigit()
                     Text(s.mainLayer).font(.caption).foregroundStyle(Palette.ink2).lineLimit(1).minimumScaleFactor(0.7)
                 }
                 .font(.footnote)
@@ -338,7 +364,7 @@ struct HourChart: View {
     let stats: Stats
     let color: Color
     var body: some View {
-        let counts = (0..<24).map { h in stats.filter { $0.hour == h }.groups }
+        let counts = stats.hourlyGroups
         let peak = counts.indices.max { counts[$0] < counts[$1] } ?? -1
         Chart {
             ForEach(0..<24, id: \.self) { h in
@@ -359,29 +385,32 @@ struct HourChart: View {
 
 struct PartyBar: View {
     let stats: Stats
+
+    private static let kinds: [(label: String, color: Color)] = [
+        ("1名", Color(hex: 0x4A4A50)),
+        ("2名", Color(hex: 0x2E7D6B)),
+        ("3名以上", Color(hex: 0x9A9AA0))
+    ]
+
     var body: some View {
         let total = max(stats.groups, 1)
-        let parts: [(String, Int, Color)] = [
-            ("1名", stats.filter { $0.party == 1 }.groups, Color(hex: 0x4A4A50)),
-            ("2名", stats.filter { $0.party == 2 }.groups, Color(hex: 0x2E7D6B)),
-            ("3名以上", stats.filter { $0.party >= 3 }.groups, Color(hex: 0x9A9AA0))
-        ]
+        let counts = stats.partyGroups
         VStack(alignment: .leading, spacing: 6) {
             GeometryReader { geo in
                 HStack(spacing: 2) {
-                    ForEach(parts.indices, id: \.self) { i in
-                        let f = Double(parts[i].1) / Double(total)
-                        Text(f >= 0.18 ? "\(parts[i].0) \(pct(parts[i].1, total))" : "")
+                    ForEach(Self.kinds.indices, id: \.self) { i in
+                        let f = Double(counts[i]) / Double(total)
+                        Text(f >= 0.18 ? "\(Self.kinds[i].label) \(pct(counts[i], total))" : "")
                             .font(.caption.weight(.bold)).foregroundStyle(.white)
                             .lineLimit(1)
                             .frame(width: max(geo.size.width * f - 2, 0), height: 26)
-                            .background(parts[i].2)
+                            .background(Self.kinds[i].color)
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             }
             .frame(height: 26)
-            Text(parts.map { "\($0.0) \(pct($0.1, stats.groups))" }.joined(separator: "　"))
+            Text(Self.kinds.indices.map { "\(Self.kinds[$0].label) \(pct(counts[$0], stats.groups))" }.joined(separator: "　"))
                 .font(.caption).foregroundStyle(Palette.ink2)
         }
     }
