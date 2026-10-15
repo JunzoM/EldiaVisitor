@@ -42,11 +42,9 @@ final class ManualStore {
 
     func card(_ id: UUID) -> ManualCard? { cards.first { $0.id == id } }
 
-    func search(_ text: String) -> [ManualCard] {
-        let words = text.split(whereSeparator: { $0 == " " || $0 == "　" }).map(String.init)
-        guard !words.isEmpty else { return [] }
-        return cards.filter { c in words.allSatisfy { c.searchText.localizedCaseInsensitiveContains($0) } }
-            .sorted { $0.title < $1.title }
+    /// あいまい検索（単語に分けて、どれか1つでも当たれば候補に出す）
+    func search(_ text: String) -> ManualSearch.Result {
+        ManualSearch.run(text, in: cards)
     }
 
     // MARK: 読み込み

@@ -216,21 +216,49 @@ struct ManualHomeView: View {
         .onDisappear { voice.stop() }
     }
 
-    @ViewBuilder
     private var searchResults: some View {
-        let found = manual.search(query)
-        if found.isEmpty {
-            Text("見つかりません。別の言葉で探すか、上のカテゴリから選んでください")
-                .font(.title3).foregroundStyle(Palette.sub)
-                .padding(.top, 20)
-        } else {
-            VStack(spacing: 10) {
-                ForEach(found) { c in
-                    NavigationLink(value: ManualRoute.card(c.id)) {
-                        CardRow(card: c, showCategory: true)
+        let result = manual.search(query)
+        return VStack(alignment: .leading, spacing: 12) {
+            if !result.keywords.isEmpty {
+                HStack(spacing: 8) {
+                    Text("探した言葉").font(.subheadline.weight(.bold)).foregroundStyle(Palette.sub)
+                    ForEach(result.keywords, id: \.self) { k in
+                        Text(k)
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(Palette.teal)
+                            .padding(.horizontal, 10).padding(.vertical, 4)
+                            .background(Color(hex: 0xE3F0EC), in: Capsule())
                     }
-                    .buttonStyle(.plain)
                 }
+            }
+            if result.hits.isEmpty {
+                Text("見つかりません。別の言葉で探すか、上のカテゴリから選んでください")
+                    .font(.title3).foregroundStyle(Palette.sub)
+                    .padding(.top, 8)
+            } else {
+                if !result.full.isEmpty {
+                    if result.keywords.count > 1 {
+                        Text("すべての言葉に当てはまる").font(.headline).foregroundStyle(Palette.ink2)
+                    }
+                    hitList(result.full)
+                }
+                if !result.partial.isEmpty {
+                    Text(result.full.isEmpty ? "近いもの（一部の言葉に当てはまる）" : "ほかの候補（一部の言葉に当てはまる）")
+                        .font(.headline).foregroundStyle(Palette.ink2)
+                        .padding(.top, result.full.isEmpty ? 0 : 8)
+                    hitList(result.partial)
+                }
+            }
+        }
+    }
+
+    private func hitList(_ hits: [ManualSearch.Hit]) -> some View {
+        VStack(spacing: 10) {
+            ForEach(hits) { h in
+                NavigationLink(value: ManualRoute.card(h.card.id)) {
+                    CardRow(card: h.card, showCategory: true)
+                }
+                .buttonStyle(.plain)
             }
         }
     }
