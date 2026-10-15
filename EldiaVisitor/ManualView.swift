@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// フロントマニュアル（来店記録の画面から全画面で開く）
 struct ManualRootView: View {
@@ -698,4 +699,17 @@ struct BarPill: View {
 
 extension JST {
     static let shortDate = formatter("yyyy/M/d")
+}
+
+/// 戻るボタンを自前にすると画面左端からのスワイプで戻れなくなるため、スワイプを有効に戻す
+/// （1つ目の画面ではスワイプしない）
+extension UINavigationController: UIGestureRecognizerDelegate {
+    override open func viewDidLoad() {
+        super.viewDidLoad()
+        interactivePopGestureRecognizer?.delegate = self
+    }
+
+    public func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        viewControllers.count > 1
+    }
 }
