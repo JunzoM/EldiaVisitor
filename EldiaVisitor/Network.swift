@@ -43,6 +43,12 @@ enum APIError: LocalizedError {
     case badLogin
     case http(Int, String)
 
+    /// サーバー関数がまだ用意されていない（データベースの更新前）
+    var isMissingFunction: Bool {
+        if case .http(let code, let body) = self { return code == 404 && body.contains("PGRST202") }
+        return false
+    }
+
     var errorDescription: String? {
         switch self {
         case .notLoggedIn: return "ログインしてください"
@@ -194,6 +200,29 @@ struct TodayRow: Decodable, Equatable {
     let client_id: UUID?
 }
 
+/// サーバー関数 visitor_sync の結果。changed が false のときは版（v）だけが入る
+struct SyncSnapshot: Decodable {
+    let v: String
+    let changed: Bool
+    let recent: [VisitorLog]?
+    let today: [TodayRow]?
+}
+
+/// よく使う組み合わせ（サーバー関数 visitor_frequent の1行）
+struct FrequentCombo: Decodable, Hashable, Identifiable, AgeGenderCounts {
+    let store: StoreID
+    let segment: Segment
+    let m10: Int, m20: Int, m30: Int, m40: Int, m50: Int, m60: Int
+    let f10: Int, f20: Int, f30: Int, f40: Int, f50: Int, f60: Int
+    /// 期間内に記録された回数
+    let n: Int
+
+    var id: String { "\(store.rawValue)-\(segment.rawValue)-\(summary)" }
+    var summary: String { partySummary { count($0, $1) } }
+    /// ボタンの文字（一般は客層を省く）
+    var label: String { segment == .general ? summary : "\(summary) \(segment.label)" }
+}
+
 // MARK: - Supabase への読み書き
 
 @MainActor
@@ -283,6 +312,22 @@ final class API {
                            method: "DELETE",
                            query: [URLQueryItem(name: "id", value: "eq.\(id.uuidString.lowercased())")],
                            headers: ["Prefer": "return=minimal"])
+    }
+
+    /// 同期1回分（直前5組×2店舗＋今日の件数）。known に前回の版を渡すと、変化がなければ版だけが返る
+    func sync(since: Date, known: String?) async throws -> SyncSnapshot {
+        var params: [String: Any] = ["p_since": ISODate.string(since)]
+        if let known { params["p_known"] = known }
+        let body = try JSONSerialization.data(withJSONObject: params)
+        let (data, _) = try await send(path: "rest/v1/rpc/visitor_sync", method: "POST", body: body)
+        return try ISODate.decoder.decode(SyncSnapshot.self, from: data)
+    }
+
+    /// 店舗ごとの、よく使う組み合わせ（直近30日で3回以上・上位3つ）
+    func frequent() async throws -> [FrequentCombo] {
+        let body = try JSONSerialization.data(withJSONObject: ["p_days": 30, "p_limit": 3])
+        let (data, _) = try await send(path: "rest/v1/rpc/visitor_frequent", method: "POST", body: body)
+        return try JSONDecoder().decode([FrequentCombo].self, from: data)
     }
 
     func stats(from: Date, to: Date) async throws -> [StatRow] {

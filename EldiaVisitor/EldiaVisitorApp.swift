@@ -32,6 +32,7 @@ struct RootView: View {
     @Environment(AuthManager.self) private var auth
     @Environment(LogStore.self) private var logs
     @Environment(ManualStore.self) private var manual
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
@@ -45,6 +46,15 @@ struct RootView: View {
             }
         }
         .animation(.default, value: auth.session == nil)
+        // 別のアプリに切り替えている間は同期を止め、戻ったらすぐ最新にする
+        .onChange(of: scenePhase) { _, phase in
+            guard auth.session != nil else { return }
+            switch phase {
+            case .active: logs.start()
+            case .background: logs.pause()
+            default: break
+            }
+        }
     }
 }
 

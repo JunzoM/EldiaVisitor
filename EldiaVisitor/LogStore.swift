@@ -30,6 +30,8 @@ final class LogStore {
     private(set) var serverRecent: [StoreID: [VisitorLog]] = [:]
     private(set) var lastSync: Date?
     private(set) var lastError: String?
+    /// 店舗ごとの、よく使う組み合わせ（30分ごとに取り直す）
+    private(set) var frequent: [StoreID: [FrequentCombo]] = [:]
 
     /// サーバーから取った今日の記録（店舗ごとに集計済み。画面を描くたびに数え直さない）
     private var serverToday: [StoreID: ServerTodaySummary] = [:]
@@ -37,16 +39,23 @@ final class LogStore {
     @ObservationIgnored private var loop: Task<Void, Never>?
     @ObservationIgnored private var isFlushing = false
     @ObservationIgnored private var todayStart = JST.startOfToday()
+    /// サーバーの記録の版。変化がなければ中身を受け取らない
+    @ObservationIgnored private var syncVersion: String?
+    /// まとめて取得するサーバー関数がまだないとき、次に試す時刻（それまでは従来の3回の取得）
+    @ObservationIgnored private var syncFunctionRetryAt: Date?
+    @ObservationIgnored private var frequentFetchedAt: Date?
 
     /// 同期の間隔（未送信の再送＋最新の取得）
     private static let syncInterval: UInt64 = 10_000_000_000
+    /// サーバー関数がないときに、もう一度試すまでの時間・よく使う組み合わせを取り直す間隔
+    private static let slowInterval: TimeInterval = 30 * 60
 
     init(api: API) {
         self.api = api
         pending = Self.loadPending()
     }
 
-    // MARK: 同期ループ（10秒ごと：未送信の再送＋最新の取得）
+    // MARK: 同期ループ（10秒ごと：未送信の再送＋最新の取得。変化がなければ版の確認だけ）
 
     func start() {
         guard loop == nil else { return }
@@ -58,12 +67,21 @@ final class LogStore {
         }
     }
 
-    func stop() {
+    /// アプリが裏に回ったときは同期を止める（表示中の内容は残す）
+    func pause() {
         loop?.cancel()
         loop = nil
+    }
+
+    /// ログアウト時：同期を止めて、サーバーから取った内容を消す
+    func stop() {
+        pause()
         serverRecent = [:]
         serverToday = [:]
         serverTodayRows = []
+        frequent = [:]
+        syncVersion = nil
+        frequentFetchedAt = nil
     }
 
     func syncNow() async {
@@ -142,25 +160,68 @@ final class LogStore {
     func refresh() async {
         do {
             let start = JST.startOfToday()
-            async let m = api.recent(store: .modern)
-            async let l = api.recent(store: .luxury)
-            async let t = api.todayRows(since: start)
-            let (mr, lr, tr) = try await (m, l, t)
-            // 内容が変わったときだけ更新する（10秒ごとの同期で画面を無駄に描き直さない）
-            let recent: [StoreID: [VisitorLog]] = [.modern: mr, .luxury: lr]
-            if recent != serverRecent { serverRecent = recent }
-            if tr != serverTodayRows || start != todayStart {
-                serverTodayRows = tr
-                serverToday = Self.summarize(tr)
+            // 日付が変わったら版を使わず、必ず中身を受け取る
+            let known = start == todayStart ? syncVersion : nil
+            if let latest = try await fetchLatest(since: start, known: known) {
+                apply(latest, start: start)
             }
             todayStart = start
             lastSync = Date()
             if pending.isEmpty, lastError != nil { lastError = nil }
         } catch APIError.notLoggedIn {
             stop()
+            return
         } catch {
             lastError = "最新の記録を取得できません（\(error.localizedDescription)）"
         }
+        await refreshFrequentIfNeeded()
+    }
+
+    private struct Latest {
+        var recent: [StoreID: [VisitorLog]]
+        var today: [TodayRow]
+        var version: String?
+    }
+
+    /// 最新の記録を取る。変化がなければ nil。
+    /// サーバー関数 visitor_sync があれば1回の通信、なければ従来どおり3回に分けて取る
+    private func fetchLatest(since start: Date, known: String?) async throws -> Latest? {
+        if syncFunctionRetryAt.map({ Date() >= $0 }) ?? true {
+            do {
+                let snap = try await api.sync(since: start, known: known)
+                syncFunctionRetryAt = nil
+                guard snap.changed else { return nil }
+                var recent: [StoreID: [VisitorLog]] = [.modern: [], .luxury: []]
+                for log in snap.recent ?? [] { recent[log.store, default: []].append(log) }
+                return Latest(recent: recent, today: snap.today ?? [], version: snap.v)
+            } catch let e as APIError where e.isMissingFunction {
+                syncFunctionRetryAt = Date().addingTimeInterval(Self.slowInterval)
+            }
+        }
+        async let m = api.recent(store: .modern)
+        async let l = api.recent(store: .luxury)
+        async let t = api.todayRows(since: start)
+        let (mr, lr, tr) = try await (m, l, t)
+        return Latest(recent: [.modern: mr, .luxury: lr], today: tr, version: nil)
+    }
+
+    /// 内容が変わったときだけ更新する（10秒ごとの同期で画面を無駄に描き直さない）
+    private func apply(_ latest: Latest, start: Date) {
+        if latest.recent != serverRecent { serverRecent = latest.recent }
+        if latest.today != serverTodayRows || start != todayStart {
+            serverTodayRows = latest.today
+            serverToday = Self.summarize(latest.today)
+        }
+        syncVersion = latest.version
+    }
+
+    private func refreshFrequentIfNeeded() async {
+        if let t = frequentFetchedAt, Date().timeIntervalSince(t) < Self.slowInterval { return }
+        frequentFetchedAt = Date()
+        // 補助の機能なので、取れなくてもエラーは出さない
+        guard let rows = try? await api.frequent() else { return }
+        let grouped = Dictionary(grouping: rows, by: \.store)
+        if grouped != frequent { frequent = grouped }
     }
 
     private static func summarize(_ rows: [TodayRow]) -> [StoreID: ServerTodaySummary] {
