@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import ImageIO
 import Observation
 
 /// フロントマニュアルの読み込み・端末内保存・編集。
@@ -10,7 +11,10 @@ import Observation
 final class ManualStore {
     let auth: AuthManager
 
-    private(set) var cards: [ManualCard] = []
+    /// すべてのカード。変わるたびに、カテゴリ別一覧・ID 引き・検索用の索引を作り直す
+    private(set) var cards: [ManualCard] = [] {
+        didSet { rebuildIndexes() }
+    }
     private(set) var loading = false
     private(set) var lastError: String?
     private(set) var lastLoaded: Date?
@@ -26,25 +30,36 @@ final class ManualStore {
     var path: [ManualRoute] = []
     var run: ManualRun?
 
-    @ObservationIgnored private var imageMemory: [String: UIImage] = [:]
+    // 画面から何度も呼ばれるので、カードが変わったときだけ作り直す
+    private var cardsByCategory: [ManualCategory: [ManualCard]] = [:]
+    private var cardsByID: [UUID: ManualCard] = [:]
+    private var searchIndex: [ManualSearch.Entry] = []
+
+    /// 表示用に読み込んだ写真（メモリが足りなくなると iOS が自動で捨てる）
+    @ObservationIgnored private let imageMemory = NSCache<NSString, UIImage>()
 
     init(auth: AuthManager) {
         self.auth = auth
-        cards = Self.loadCache()
+        cards = ManualCache.loadCards()
+        rebuildIndexes() // init の中では didSet が呼ばれないため
     }
 
     var canEdit: Bool { sessionIsAdmin || adminSession != nil }
 
-    func cards(in category: ManualCategory) -> [ManualCard] {
-        cards.filter { $0.category == category }
-            .sorted { ($0.sort_order, $0.title) < ($1.sort_order, $1.title) }
-    }
+    func cards(in category: ManualCategory) -> [ManualCard] { cardsByCategory[category] ?? [] }
 
-    func card(_ id: UUID) -> ManualCard? { cards.first { $0.id == id } }
+    func card(_ id: UUID) -> ManualCard? { cardsByID[id] }
 
     /// あいまい検索（単語に分けて、どれか1つでも当たれば候補に出す）
     func search(_ text: String) -> ManualSearch.Result {
-        ManualSearch.run(text, in: cards)
+        ManualSearch.run(text, in: searchIndex)
+    }
+
+    private func rebuildIndexes() {
+        cardsByCategory = Dictionary(grouping: cards, by: \.category)
+            .mapValues { $0.sorted { ($0.sort_order, $0.title) < ($1.sort_order, $1.title) } }
+        cardsByID = Dictionary(cards.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        searchIndex = ManualSearch.index(cards)
     }
 
     // MARK: 読み込み
@@ -59,13 +74,12 @@ final class ManualStore {
                 URLQueryItem(name: "select", value: "id,category,title,steps,sort_order,updated_at"),
                 URLQueryItem(name: "order", value: "category.asc,sort_order.asc,title.asc")
             ], token: token)
-            let list = try ISODate.decoder.decode([ManualCard].self, from: data)
-            cards = list
-            saveCache()
+            cards = try ISODate.decoder.decode([ManualCard].self, from: data)
+            ManualCache.saveCards(cards)
             lastLoaded = Date()
             lastError = nil
             sessionIsAdmin = (try? await isAdmin(token: token)) ?? sessionIsAdmin
-            await prefetchImages()
+            await prefetchImages(token: token)
         } catch {
             lastError = cards.isEmpty
                 ? "マニュアルを読み込めません（\(error.localizedDescription)）"
@@ -81,23 +95,9 @@ final class ManualStore {
     // MARK: 編集のログイン
 
     func adminSignIn(email: String, password: String) async throws {
-        var comps = URLComponents(url: AppConfig.supabaseURL.appendingPathComponent("auth/v1/token"), resolvingAgainstBaseURL: false)!
-        comps.queryItems = [URLQueryItem(name: "grant_type", value: "password")]
-        var req = URLRequest(url: comps.url!)
-        req.httpMethod = "POST"
-        req.setValue(AppConfig.anonKey, forHTTPHeaderField: "apikey")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["email": email, "password": password])
-        let (data, resp) = try await SupabaseTrust.session.data(for: req)
-        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-        if code == 400 || code == 401 || code == 403 { throw APIError.badLogin }
-        guard (200..<300).contains(code) else { throw APIError.http(code, String(data: data, encoding: .utf8) ?? "") }
-        struct T: Decodable { let access_token: String; let refresh_token: String; let expires_in: Double }
-        let t = try JSONDecoder().decode(T.self, from: data)
-        let s = AuthSession(accessToken: t.access_token, refreshToken: t.refresh_token,
-                            expiresAt: Date().addingTimeInterval(t.expires_in), email: email)
-        guard try await isAdmin(token: s.accessToken) else { throw ManualError.notAdmin }
-        adminSession = s
+        let session = try await AuthManager.passwordSession(email: email, password: password)
+        guard try await isAdmin(token: session.accessToken) else { throw ManualError.notAdmin }
+        adminSession = session
         editing = true
     }
 
@@ -107,6 +107,7 @@ final class ManualStore {
         adminSession = nil
     }
 
+    /// 書き込みに使うトークン（管理者ログイン中ならそれ、共通ログインが管理者ならそれ）
     private func editToken() async throws -> String {
         if let s = adminSession {
             guard s.expiresAt.timeIntervalSinceNow > 30 else {
@@ -126,34 +127,35 @@ final class ManualStore {
         let token = try await editToken()
         var c = card
         c.title = c.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let isNew = self.card(c.id) == nil
-        if isNew {
-            c.sort_order = (cards(in: c.category).map(\.sort_order).max() ?? -1) + 1
-        } else if let old = self.card(c.id), old.category != c.category {
-            c.sort_order = (cards(in: c.category).map(\.sort_order).max() ?? -1) + 1
+        // 新しいカード、またはカテゴリを移したカードは、そのカテゴリの最後に並べる
+        if self.card(c.id)?.category != c.category {
+            c.sort_order = nextSortOrder(in: c.category)
         }
-        let body = try JSONEncoder().encode(Payload(c, includeID: true))
         let data = try await request("rest/v1/manual_cards", method: "POST",
                                      query: [URLQueryItem(name: "on_conflict", value: "id")],
-                                     body: body,
+                                     body: try JSONEncoder().encode(CardPayload(c)),
                                      headers: ["Prefer": "resolution=merge-duplicates,return=representation"],
                                      token: token)
         if let saved = try? ISODate.decoder.decode([ManualCard].self, from: data).first { c = saved }
         if let i = cards.firstIndex(where: { $0.id == c.id }) { cards[i] = c } else { cards.append(c) }
-        saveCache()
+        ManualCache.saveCards(cards)
+    }
+
+    private func nextSortOrder(in category: ManualCategory) -> Int {
+        (cards(in: category).map(\.sort_order).max() ?? -1) + 1
     }
 
     func delete(_ card: ManualCard) async throws {
         let token = try await editToken()
         _ = try await request("rest/v1/manual_cards", method: "DELETE",
-                              query: [URLQueryItem(name: "id", value: "eq.\(card.id.uuidString.lowercased())")],
+                              query: [SupabaseRequest.eq("id", card.id)],
                               headers: ["Prefer": "return=minimal"], token: token)
         cards.removeAll { $0.id == card.id }
         if run?.cardID == card.id { run = nil }
-        saveCache()
+        ManualCache.saveCards(cards)
     }
 
-    /// カードの並び順を1つ上下に動かす
+    /// カードの並び順を1つ上下に動かす（カテゴリ内の並びをまとめて1回の通信で保存）
     func move(_ card: ManualCard, by offset: Int) async throws {
         var list = cards(in: card.category)
         guard let i = list.firstIndex(where: { $0.id == card.id }) else { return }
@@ -161,43 +163,46 @@ final class ManualStore {
         guard list.indices.contains(j) else { return }
         list.swapAt(i, j)
         let token = try await editToken()
-        for (n, c) in list.enumerated() where c.sort_order != n {
-            _ = try await request("rest/v1/manual_cards", method: "PATCH",
-                                  query: [URLQueryItem(name: "id", value: "eq.\(c.id.uuidString.lowercased())")],
-                                  body: try JSONSerialization.data(withJSONObject: ["sort_order": n]),
-                                  headers: ["Prefer": "return=minimal"], token: token)
-            if let k = cards.firstIndex(where: { $0.id == c.id }) { cards[k].sort_order = n }
+        let ids = list.map { $0.id.uuidString.lowercased() }
+        _ = try await request("rest/v1/rpc/manual_set_order", method: "POST",
+                              body: try JSONSerialization.data(withJSONObject: ["p_ids": ids]),
+                              headers: ["Prefer": "return=minimal"], token: token)
+        applyLocalOrder(list.map(\.id))
+        ManualCache.saveCards(cards)
+    }
+
+    /// 端末内のカードにも、新しい並び順（0,1,2…）を反映する（作り直しは1回だけ）
+    private func applyLocalOrder(_ ids: [UUID]) {
+        let order = Dictionary(ids.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+        var updated = cards
+        for k in updated.indices {
+            if let n = order[updated[k].id], updated[k].sort_order != n { updated[k].sort_order = n }
         }
-        saveCache()
+        cards = updated
     }
 
     // MARK: 変更前の版
 
     func versions(of cardID: UUID) async throws -> [ManualVersion] {
-        let token = try await editToken()
-        let data = try await request("rest/v1/manual_card_versions", query: [
-            URLQueryItem(name: "select", value: "*"),
-            URLQueryItem(name: "card_id", value: "eq.\(cardID.uuidString.lowercased())"),
-            URLQueryItem(name: "order", value: "saved_at.desc"),
-            URLQueryItem(name: "limit", value: "30")
-        ], token: token)
-        return try ISODate.decoder.decode([ManualVersion].self, from: data)
+        try await fetchVersions([SupabaseRequest.eq("card_id", cardID)], limit: 30)
     }
 
     /// 削除したカード（今は無いもの）の最後の内容
     func deletedCards(in category: ManualCategory) async throws -> [ManualVersion] {
-        let token = try await editToken()
-        let data = try await request("rest/v1/manual_card_versions", query: [
-            URLQueryItem(name: "select", value: "*"),
-            URLQueryItem(name: "action", value: "eq.delete"),
-            URLQueryItem(name: "category", value: "eq.\(category.rawValue)"),
-            URLQueryItem(name: "order", value: "saved_at.desc"),
-            URLQueryItem(name: "limit", value: "50")
-        ], token: token)
-        let all = try ISODate.decoder.decode([ManualVersion].self, from: data)
-        let alive = Set(cards.map(\.id))
+        let all = try await fetchVersions([SupabaseRequest.eq("action", "delete"),
+                                           SupabaseRequest.eq("category", category.rawValue)], limit: 50)
         var seen = Set<UUID>()
-        return all.filter { !alive.contains($0.card_id) && seen.insert($0.card_id).inserted }
+        return all.filter { cardsByID[$0.card_id] == nil && seen.insert($0.card_id).inserted }
+    }
+
+    private func fetchVersions(_ filters: [URLQueryItem], limit: Int) async throws -> [ManualVersion] {
+        let token = try await editToken()
+        let data = try await request("rest/v1/manual_card_versions", query:
+            [URLQueryItem(name: "select", value: "*")] + filters + [
+                URLQueryItem(name: "order", value: "saved_at.desc"),
+                URLQueryItem(name: "limit", value: "\(limit)")
+            ], token: token)
+        return try ISODate.decoder.decode([ManualVersion].self, from: data)
     }
 
     func restoreDeleted(_ v: ManualVersion) async throws {
@@ -213,47 +218,66 @@ final class ManualStore {
     /// 写真を縮小してアップロードし、ファイル名を返す
     func upload(_ image: UIImage) async throws -> String {
         let token = try await editToken()
-        guard let jpeg = Self.shrink(image).jpegData(compressionQuality: 0.78) else { throw ManualError.badImage }
+        guard let jpeg = ManualImages.shrink(image).jpegData(compressionQuality: 0.78) else { throw ManualError.badImage }
         let name = "\(UUID().uuidString.lowercased()).jpg"
         _ = try await request("storage/v1/object/manual-images/\(name)", method: "POST", body: jpeg,
                               contentType: "image/jpeg", token: token)
-        try? jpeg.write(to: Self.imageFile(name), options: .atomic)
-        imageMemory[name] = UIImage(data: jpeg)
+        try? jpeg.write(to: ManualCache.imageFile(name), options: .atomic)
+        if let img = UIImage(data: jpeg) { imageMemory.setObject(img, forKey: name as NSString) }
         return name
     }
 
-    /// 端末内にあればそれを、無ければダウンロードして返す
-    func image(_ name: String) async -> UIImage? {
-        if let img = imageMemory[name] { return img }
-        let file = Self.imageFile(name)
-        if let data = try? Data(contentsOf: file), let img = UIImage(data: data) {
-            imageMemory[name] = img
-            return img
+    /// 端末内にあればそれを、無ければダウンロードして返す（読み込みと画像の展開は裏で行い、画面を止めない）
+    /// maxPixel を渡すと、長い辺をその大きさに縮めた画像を返す（小さく表示するときのメモリ節約）
+    func image(_ name: String, maxPixel: CGFloat? = nil) async -> UIImage? {
+        let key = (maxPixel.map { "\(name)@\(Int($0))" } ?? name) as NSString
+        if let img = imageMemory.object(forKey: key) { return img }
+        let file = ManualCache.imageFile(name)
+        var img: UIImage?
+        if let data = await ManualImages.readFile(file) {
+            img = await ManualImages.make(data, maxPixel: maxPixel)
         }
-        guard let token = try? await auth.accessToken(),
-              let data = try? await request("storage/v1/object/authenticated/manual-images/\(name)", token: token),
-              let img = UIImage(data: data) else { return nil }
-        try? data.write(to: file, options: .atomic)
-        imageMemory[name] = img
+        // 端末に無い、または壊れていたらダウンロードし直す
+        if img == nil, let data = await downloadImage(name) {
+            try? data.write(to: file, options: .atomic)
+            img = await ManualImages.make(data, maxPixel: maxPixel)
+        }
+        if let img { imageMemory.setObject(img, forKey: key) }
         return img
     }
 
-    /// 回線が切れても見られるように、すべての写真を先に保存しておく
-    private func prefetchImages() async {
-        let names = Set(cards.flatMap { $0.steps.compactMap(\.image) })
-        for n in names where !FileManager.default.fileExists(atPath: Self.imageFile(n).path) {
-            _ = await image(n)
-        }
+    /// 写真をダウンロードする（その場でログインのトークンを取る）
+    private func downloadImage(_ name: String) async -> Data? {
+        guard let token = try? await auth.accessToken() else { return nil }
+        return await Self.fetchImageData(name, token: token)
     }
 
-    private static func shrink(_ image: UIImage, maxSide: CGFloat = 1600) -> UIImage {
-        let s = image.size
-        let scale = min(1, maxSide / max(s.width, s.height))
-        let size = CGSize(width: (s.width * scale).rounded(), height: (s.height * scale).rounded())
-        let format = UIGraphicsImageRendererFormat.default()
-        format.scale = 1
-        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
-            image.draw(in: CGRect(origin: .zero, size: size))
+    /// 写真のデータを取得する（失敗したら nil）。画面の処理に依存しないので、並行して呼べる
+    nonisolated private static func fetchImageData(_ name: String, token: String) async -> Data? {
+        var req = SupabaseRequest.make(path: "storage/v1/object/authenticated/manual-images/\(name)",
+                                       method: "GET", bearer: token)
+        req.timeoutInterval = 30
+        guard let (data, resp) = try? await SupabaseTrust.session.data(for: req),
+              let code = (resp as? HTTPURLResponse)?.statusCode, (200..<300).contains(code) else { return nil }
+        return data
+    }
+
+    /// 回線が切れても見られるように、まだ端末に無い写真を先に保存しておく
+    /// （保存するだけで画像は展開しない。4枚ずつ同時にダウンロードする）
+    private func prefetchImages(token: String) async {
+        let missing = Set(cards.flatMap { $0.steps.compactMap(\.image) })
+            .filter { !FileManager.default.fileExists(atPath: ManualCache.imageFile($0).path) }
+        for batch in Array(missing).chunked(4) {
+            await withTaskGroup(of: Void.self) { group in
+                for name in batch {
+                    let file = ManualCache.imageFile(name)
+                    group.addTask {
+                        if let data = await Self.fetchImageData(name, token: token) {
+                            try? data.write(to: file, options: .atomic)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -266,34 +290,29 @@ final class ManualStore {
                          contentType: String = "application/json",
                          headers: [String: String] = [:],
                          token: String) async throws -> Data {
-        var comps = URLComponents(url: AppConfig.supabaseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
-        if !query.isEmpty { comps.queryItems = query }
-        var req = URLRequest(url: comps.url!)
-        req.httpMethod = method
+        var req = SupabaseRequest.make(path: path, method: method, query: query, body: body, bearer: token,
+                                       headers: headers.merging(["Content-Type": contentType]) { $1 })
         req.timeoutInterval = 30
-        req.setValue(AppConfig.anonKey, forHTTPHeaderField: "apikey")
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.setValue(contentType, forHTTPHeaderField: "Content-Type")
-        for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
-        req.httpBody = body
         let (data, resp) = try await SupabaseTrust.session.data(for: req)
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(code) else {
             if code == 401 || code == 403, adminSession != nil || sessionIsAdmin, method != "GET" {
                 throw ManualError.notAdmin
             }
-            throw APIError.http(code, String(data: data, encoding: .utf8) ?? "")
+            throw APIError.http(code, SupabaseRequest.bodyText(data))
         }
         return data
     }
 
-    private struct Payload: Encodable {
+    /// サーバーへ送るカードの形
+    private struct CardPayload: Encodable {
         let id: UUID
         let category: String
         let title: String
         let steps: [ManualStep]
         let sort_order: Int
-        init(_ c: ManualCard, includeID: Bool) {
+
+        init(_ c: ManualCard) {
             id = c.id
             category = c.category.rawValue
             title = c.title
@@ -301,32 +320,95 @@ final class ManualStore {
             sort_order = c.sort_order
         }
     }
+}
 
-    // MARK: 端末内保存
+// MARK: - 端末内保存（カードの JSON と写真ファイル）
 
-    private static var baseDir: URL {
+enum ManualCache {
+    private static let baseDir: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
-    }
+    }()
 
-    private static var cacheURL: URL { baseDir.appendingPathComponent("manual-cards.json") }
+    private static let cardsFile = baseDir.appendingPathComponent("manual-cards.json")
 
-    private static func imageFile(_ name: String) -> URL {
+    private static let imageDir: URL = {
         let dir = baseDir.appendingPathComponent("manual-images", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent(name)
-    }
+        return dir
+    }()
 
-    private static func loadCache() -> [ManualCard] {
-        guard let data = try? Data(contentsOf: cacheURL) else { return [] }
+    static func imageFile(_ name: String) -> URL { imageDir.appendingPathComponent(name) }
+
+    static func loadCards() -> [ManualCard] {
+        guard let data = try? Data(contentsOf: cardsFile) else { return [] }
         return (try? ISODate.decoder.decode([ManualCard].self, from: data)) ?? []
     }
 
-    private func saveCache() {
-        if let data = try? ISODate.encoder.encode(cards) {
-            try? data.write(to: Self.cacheURL, options: .atomic)
+    /// 書き込みは画面の処理の外で、頼まれた順に1つずつ行う（古い内容が新しい内容を上書きしないように）
+    private static let writeQueue = DispatchQueue(label: "manual-cache-write", qos: .utility)
+
+    /// 書き込み専用の JSON 変換（ISODate.encoder と同じ日時の書き方。画面側と同時に使わないよう別に持つ）
+    private static let encoder: JSONEncoder = {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .custom { date, enc in
+            var c = enc.singleValueContainer()
+            try c.encode(ISODate.string(date))
         }
+        return e
+    }()
+
+    static func saveCards(_ cards: [ManualCard]) {
+        let file = cardsFile
+        writeQueue.async {
+            if let data = try? encoder.encode(cards) {
+                try? data.write(to: file, options: .atomic)
+            }
+        }
+    }
+}
+
+// MARK: - 写真の加工
+
+enum ManualImages {
+    /// 長い辺を maxSide 以下に縮小する
+    static func shrink(_ image: UIImage, maxSide: CGFloat = 1600) -> UIImage {
+        let s = image.size
+        let scale = min(1, maxSide / max(s.width, s.height))
+        let size = CGSize(width: (s.width * scale).rounded(), height: (s.height * scale).rounded())
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }
+    }
+
+    /// ファイルを読み込む（メインスレッドの外で）
+    static func readFile(_ url: URL) async -> Data? {
+        await Task.detached(priority: .userInitiated) { try? Data(contentsOf: url) }.value
+    }
+
+    /// 表示できる状態まで展開する（メインスレッドの外で）。maxPixel があれば縮小版を作る
+    static func make(_ data: Data, maxPixel: CGFloat?) async -> UIImage? {
+        await Task.detached(priority: .userInitiated) { () async -> UIImage? in
+            if let maxPixel { return thumbnail(data, maxPixel: maxPixel) }
+            guard let img = UIImage(data: data) else { return nil }
+            return await img.byPreparingForDisplay() ?? img
+        }.value
+    }
+
+    /// 元の画像を全部展開せずに、縮小版だけを作る（ImageIO）
+    private static func thumbnail(_ data: Data, maxPixel: CGFloat) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel
+        ]
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return UIImage(cgImage: cg)
     }
 }
 
@@ -339,5 +421,12 @@ enum ManualError: LocalizedError {
         case .adminExpired: return "編集用のログインが切れました。もう一度ログインしてください"
         case .badImage: return "写真を読み込めませんでした"
         }
+    }
+}
+
+extension Array {
+    /// size 個ずつに分ける
+    func chunked(_ size: Int) -> [[Element]] {
+        stride(from: 0, to: count, by: size).map { Array(self[$0..<Swift.min($0 + size, count)]) }
     }
 }

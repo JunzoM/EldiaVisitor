@@ -12,7 +12,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXContainerItemProxy section */
-		E1D1A0000000000000000108 /* PBXContainerItemProxy */ = {
+		E1D1A000000000000000010A /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = E1D1A000000000000000000A /* Project object */;
 			proxyType = 1;
@@ -106,7 +106,7 @@
 			buildRules = (
 			);
 			dependencies = (
-				E1D1A0000000000000000109 /* PBXTargetDependency */,
+				E1D1A000000000000000010B /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				E1D1A0000000000000000102 /* EldiaVisitorTests */,
@@ -193,10 +193,10 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		E1D1A0000000000000000109 /* PBXTargetDependency */ = {
+		E1D1A000000000000000010B /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = E1D1A0000000000000000006 /* EldiaVisitor */;
-			targetProxy = E1D1A0000000000000000108 /* PBXContainerItemProxy */;
+			targetProxy = E1D1A000000000000000010A /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -319,7 +319,7 @@
 			};
 			name = Release;
 		};
-		E1D1A000000000000000010A /* Debug */ = {
+		E1D1A0000000000000000108 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
@@ -329,7 +329,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.bestdelight.eldiavisitor.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bestdelight.eldiavisitorTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
@@ -338,7 +338,7 @@
 			};
 			name = Debug;
 		};
-		E1D1A000000000000000010B /* Release */ = {
+		E1D1A0000000000000000109 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
@@ -348,7 +348,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.bestdelight.eldiavisitor.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bestdelight.eldiavisitorTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
@@ -360,6 +360,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		E1D1A0000000000000000107 /* Build configuration list for PBXNativeTarget "EldiaVisitorTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E1D1A0000000000000000108 /* Debug */,
+				E1D1A0000000000000000109 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		E1D1A0000000000000000007 /* Build configuration list for PBXNativeTarget "EldiaVisitor" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -374,15 +383,6 @@
 			buildConfigurations = (
 				E1D1A000000000000000000C /* Debug */,
 				E1D1A000000000000000000D /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		E1D1A0000000000000000107 /* Build configuration list for PBXNativeTarget "EldiaVisitorTests" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				E1D1A000000000000000010A /* Debug */,
-				E1D1A000000000000000010B /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
