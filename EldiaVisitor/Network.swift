@@ -52,6 +52,34 @@ enum APIError: LocalizedError {
     }
 }
 
+// MARK: - Supabase へのリクエスト作成（ログインと読み書きで共通）
+
+enum SupabaseRequest {
+    /// apikey と JSON の Content-Type を付けた URLRequest。bearer があれば Authorization も付ける
+    static func make(path: String,
+                     method: String,
+                     query: [URLQueryItem] = [],
+                     body: Data? = nil,
+                     bearer: String? = nil,
+                     headers: [String: String] = [:]) -> URLRequest {
+        var comps = URLComponents(url: AppConfig.supabaseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
+        if !query.isEmpty { comps.queryItems = query }
+        var req = URLRequest(url: comps.url!)
+        req.httpMethod = method
+        req.setValue(AppConfig.anonKey, forHTTPHeaderField: "apikey")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let bearer {
+            req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+            req.setValue("application/json", forHTTPHeaderField: "Accept")
+        }
+        for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
+        req.httpBody = body
+        return req
+    }
+
+    static func bodyText(_ data: Data) -> String { String(data: data, encoding: .utf8) ?? "" }
+}
+
 // MARK: - ログイン（共通ログイン = Supabase Auth）
 
 struct AuthSession: Codable {
@@ -121,17 +149,14 @@ final class AuthManager {
     }
 
     private func token(grant: String, body: Data, fallbackEmail: String) async throws -> AuthSession {
-        var comps = URLComponents(url: AppConfig.supabaseURL.appendingPathComponent("auth/v1/token"), resolvingAgainstBaseURL: false)!
-        comps.queryItems = [URLQueryItem(name: "grant_type", value: grant)]
-        var req = URLRequest(url: comps.url!)
-        req.httpMethod = "POST"
-        req.setValue(AppConfig.anonKey, forHTTPHeaderField: "apikey")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = body
+        let req = SupabaseRequest.make(path: "auth/v1/token",
+                                       method: "POST",
+                                       query: [URLQueryItem(name: "grant_type", value: grant)],
+                                       body: body)
         let (data, resp) = try await SupabaseTrust.session.data(for: req)
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
         if code == 400 || code == 401 || code == 403 { throw APIError.badLogin }
-        guard (200..<300).contains(code) else { throw APIError.http(code, String(data: data, encoding: .utf8) ?? "") }
+        guard (200..<300).contains(code) else { throw APIError.http(code, SupabaseRequest.bodyText(data)) }
         let t = try JSONDecoder().decode(TokenResponse.self, from: data)
         return AuthSession(accessToken: t.access_token,
                            refreshToken: t.refresh_token,
@@ -147,7 +172,7 @@ final class AuthManager {
 
 // MARK: - 集計（サーバー関数 visitor_stats の1行）
 
-struct StatRow: Codable {
+struct StatRow: Codable, AgeGenderCounts {
     let store: StoreID
     let segment: Segment
     let dow: Int
@@ -159,28 +184,11 @@ struct StatRow: Codable {
     let m10: Int, m20: Int, m30: Int, m40: Int, m50: Int, m60: Int
     let f10: Int, f20: Int, f30: Int, f40: Int, f50: Int, f60: Int
 
-    func count(_ g: Gender, _ a: AgeBand) -> Int {
-        switch (g, a) {
-        case (.m, .a10): return m10
-        case (.m, .a20): return m20
-        case (.m, .a30): return m30
-        case (.m, .a40): return m40
-        case (.m, .a50): return m50
-        case (.m, .a60): return m60
-        case (.f, .a10): return f10
-        case (.f, .a20): return f20
-        case (.f, .a30): return f30
-        case (.f, .a40): return f40
-        case (.f, .a50): return f50
-        case (.f, .a60): return f60
-        }
-    }
-    var male: Int { m10 + m20 + m30 + m40 + m50 + m60 }
-    var female: Int { f10 + f20 + f30 + f40 + f50 + f60 }
-    var people: Int { male + female }
+    /// この行の人数（男女合計）
+    var people: Int { total }
 }
 
-struct TodayRow: Decodable {
+struct TodayRow: Decodable, Equatable {
     let store: StoreID
     let total: Int
     let client_id: UUID?
@@ -193,6 +201,13 @@ final class API {
     let auth: AuthManager
     init(auth: AuthManager) { self.auth = auth }
 
+    /// 記録1組の取得に使う列
+    private static let logColumns = "id,client_id,store,visited_at,segment,m10,m20,m30,m40,m50,m60,f10,f20,f30,f40,f50,f60"
+    /// 一度に取得する最大件数（Supabase の上限に合わせる）
+    private static let pageSize = 1000
+    private static let table = "rest/v1/visitor_logs"
+
+    /// ログイン中のトークンで送る。期限切れ（401）なら1回だけトークンを更新してやり直す
     private func send(path: String,
                       method: String = "GET",
                       query: [URLQueryItem] = [],
@@ -201,32 +216,44 @@ final class API {
         var retried = false
         while true {
             let token = try await auth.accessToken(forceRefresh: retried)
-            var comps = URLComponents(url: AppConfig.supabaseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
-            if !query.isEmpty { comps.queryItems = query }
-            var req = URLRequest(url: comps.url!)
-            req.httpMethod = method
+            var req = SupabaseRequest.make(path: path, method: method, query: query, body: body, bearer: token, headers: headers)
             req.timeoutInterval = 20
-            req.setValue(AppConfig.anonKey, forHTTPHeaderField: "apikey")
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.setValue("application/json", forHTTPHeaderField: "Accept")
-            for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
-            req.httpBody = body
             let (data, resp) = try await SupabaseTrust.session.data(for: req)
             let http = resp as! HTTPURLResponse
             if http.statusCode == 401 && !retried { retried = true; continue }
             guard (200..<300).contains(http.statusCode) else {
-                throw APIError.http(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+                throw APIError.http(http.statusCode, SupabaseRequest.bodyText(data))
             }
             return (data, http)
         }
+    }
+
+    /// 1000件ずつ区切って、条件に合う行をすべて取得する
+    private func fetchAllPages<T: Decodable>(_ query: [URLQueryItem]) async throws -> [T] {
+        var all: [T] = []
+        var offset = 0
+        while true {
+            let paging = [URLQueryItem(name: "offset", value: "\(offset)"),
+                          URLQueryItem(name: "limit", value: "\(Self.pageSize)")]
+            let (data, _) = try await send(path: Self.table, query: query + paging)
+            let page = try ISODate.decoder.decode([T].self, from: data)
+            all += page
+            if page.count < Self.pageSize { return all }
+            offset += Self.pageSize
+        }
+    }
+
+    /// 期間を渡すサーバー関数（visitor_stats など）を呼ぶ
+    private func callPeriodFunction(_ name: String, from: Date, to: Date) async throws -> Data {
+        let body = try JSONSerialization.data(withJSONObject: ["p_from": ISODate.string(from), "p_to": ISODate.string(to)])
+        return try await send(path: "rest/v1/rpc/\(name)", method: "POST", body: body).0
     }
 
     /// 記録を送信（client_id が同じものは二重に登録されない）
     func insert(_ logs: [VisitorLog]) async throws {
         guard !logs.isEmpty else { return }
         let body = try ISODate.encoder.encode(logs.map(NewVisitorLog.init))
-        _ = try await send(path: "rest/v1/visitor_logs",
+        _ = try await send(path: Self.table,
                            method: "POST",
                            query: [URLQueryItem(name: "on_conflict", value: "client_id")],
                            body: body,
@@ -234,8 +261,8 @@ final class API {
     }
 
     func recent(store: StoreID, limit: Int = 5) async throws -> [VisitorLog] {
-        let (data, _) = try await send(path: "rest/v1/visitor_logs", query: [
-            URLQueryItem(name: "select", value: "id,client_id,store,visited_at,segment,m10,m20,m30,m40,m50,m60,f10,f20,f30,f40,f50,f60"),
+        let (data, _) = try await send(path: Self.table, query: [
+            URLQueryItem(name: "select", value: Self.logColumns),
             URLQueryItem(name: "store", value: "eq.\(store.rawValue)"),
             URLQueryItem(name: "order", value: "visited_at.desc"),
             URLQueryItem(name: "limit", value: "\(limit)")
@@ -244,41 +271,28 @@ final class API {
     }
 
     func todayRows(since: Date) async throws -> [TodayRow] {
-        var all: [TodayRow] = []
-        var offset = 0
-        while true {
-            let (data, _) = try await send(path: "rest/v1/visitor_logs", query: [
-                URLQueryItem(name: "select", value: "store,total,client_id"),
-                URLQueryItem(name: "visited_at", value: "gte.\(ISODate.string(since))"),
-                URLQueryItem(name: "order", value: "visited_at.asc"),
-                URLQueryItem(name: "offset", value: "\(offset)"),
-                URLQueryItem(name: "limit", value: "1000")
-            ])
-            let page = try ISODate.decoder.decode([TodayRow].self, from: data)
-            all += page
-            if page.count < 1000 { return all }
-            offset += 1000
-        }
+        try await fetchAllPages([
+            URLQueryItem(name: "select", value: "store,total,client_id"),
+            URLQueryItem(name: "visited_at", value: "gte.\(ISODate.string(since))"),
+            URLQueryItem(name: "order", value: "visited_at.asc")
+        ])
     }
 
     func delete(id: UUID) async throws {
-        _ = try await send(path: "rest/v1/visitor_logs",
+        _ = try await send(path: Self.table,
                            method: "DELETE",
                            query: [URLQueryItem(name: "id", value: "eq.\(id.uuidString.lowercased())")],
                            headers: ["Prefer": "return=minimal"])
     }
 
     func stats(from: Date, to: Date) async throws -> [StatRow] {
-        let body = try JSONSerialization.data(withJSONObject: ["p_from": ISODate.string(from), "p_to": ISODate.string(to)])
-        let (data, _) = try await send(path: "rest/v1/rpc/visitor_stats", method: "POST", body: body)
-        return try JSONDecoder().decode([StatRow].self, from: data)
+        try JSONDecoder().decode([StatRow].self, from: try await callPeriodFunction("visitor_stats", from: from, to: to))
     }
 
     /// 期間内（今日まで）の営業日の種類ごとの日数
     func dayCounts(from: Date, to: Date) async throws -> [Int: Int] {
-        let body = try JSONSerialization.data(withJSONObject: ["p_from": ISODate.string(from), "p_to": ISODate.string(to)])
-        let (data, _) = try await send(path: "rest/v1/rpc/visitor_day_counts", method: "POST", body: body)
-        let raw = try JSONDecoder().decode([String: Int].self, from: data)
+        let raw = try JSONDecoder().decode([String: Int].self,
+                                           from: try await callPeriodFunction("visitor_day_counts", from: from, to: to))
         var out: [Int: Int] = [:]
         for (k, v) in raw { if let t = Int(k) { out[t] = v } }
         return out
@@ -286,21 +300,11 @@ final class API {
 
     /// CSV 用：期間内の記録をすべて取得
     func logs(from: Date, to: Date) async throws -> [VisitorLog] {
-        var all: [VisitorLog] = []
-        var offset = 0
-        while true {
-            let (data, _) = try await send(path: "rest/v1/visitor_logs", query: [
-                URLQueryItem(name: "select", value: "id,client_id,store,visited_at,segment,m10,m20,m30,m40,m50,m60,f10,f20,f30,f40,f50,f60"),
-                URLQueryItem(name: "visited_at", value: "gte.\(ISODate.string(from))"),
-                URLQueryItem(name: "and", value: "(visited_at.lt.\(ISODate.string(to)))"),
-                URLQueryItem(name: "order", value: "visited_at.asc"),
-                URLQueryItem(name: "offset", value: "\(offset)"),
-                URLQueryItem(name: "limit", value: "1000")
-            ])
-            let page = try ISODate.decoder.decode([VisitorLog].self, from: data)
-            all += page
-            if page.count < 1000 { return all }
-            offset += 1000
-        }
+        try await fetchAllPages([
+            URLQueryItem(name: "select", value: Self.logColumns),
+            URLQueryItem(name: "visited_at", value: "gte.\(ISODate.string(from))"),
+            URLQueryItem(name: "and", value: "(visited_at.lt.\(ISODate.string(to)))"),
+            URLQueryItem(name: "order", value: "visited_at.asc")
+        ])
     }
 }
