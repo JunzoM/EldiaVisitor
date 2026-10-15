@@ -125,6 +125,7 @@ struct ManualHomeView: View {
     @Environment(ManualStore.self) private var manual
     @Binding var editingCard: ManualCard?
     @State private var query = ""
+    @State private var voice = VoiceSearch()
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     private var columns: [GridItem] {
@@ -142,6 +143,14 @@ struct ManualHomeView: View {
                         .background(Color(hex: 0xF5E9C8), in: Capsule())
                 }
                 searchField
+                if voice.listening {
+                    Label("聞いています…話し終わると自動で止まります", systemImage: "waveform")
+                        .font(.headline)
+                        .foregroundStyle(Palette.sunday)
+                        .symbolEffect(.variableColor.iterative, isActive: true)
+                } else if let err = voice.error {
+                    Text(err).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.sunday)
+                }
                 if query.trimmingCharacters(in: .whitespaces).isEmpty {
                     Text("何について調べますか？")
                         .font(.system(size: 26, weight: .heavy))
@@ -170,19 +179,40 @@ struct ManualHomeView: View {
 
     private var searchField: some View {
         HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass").foregroundStyle(Palette.sub)
-            TextField("言葉で探す（例：お釣り）", text: $query)
-                .font(.title3)
-                .submitLabel(.search)
-            if !query.isEmpty {
-                Button { query = "" } label: {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(Palette.sub)
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass").foregroundStyle(Palette.sub)
+                TextField("言葉で探す（例：お釣り）", text: $query)
+                    .font(.title3)
+                    .submitLabel(.search)
+                if !query.isEmpty {
+                    Button { query = "" } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(Palette.sub)
+                    }
+                    .accessibilityLabel("検索を消す")
                 }
-                .accessibilityLabel("検索を消す")
             }
+            .padding(.horizontal, 16).frame(minHeight: 52)
+            .background(Color.white, in: RoundedRectangle(cornerRadius: 14))
+
+            // 音声検索（話した言葉が検索欄に入る）
+            Button {
+                voice.toggle { query = $0 }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: voice.listening ? "stop.fill" : "mic.fill")
+                    Text(voice.listening ? "止める" : "声で探す")
+                }
+                .font(.headline)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 18)
+                .frame(minHeight: 52)
+                .background(voice.listening ? Palette.sunday : Palette.teal, in: RoundedRectangle(cornerRadius: 14))
+                .fixedSize()
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(voice.listening ? "音声検索を止める" : "声で探す")
         }
-        .padding(.horizontal, 16).frame(minHeight: 52)
-        .background(Color.white, in: RoundedRectangle(cornerRadius: 14))
+        .onDisappear { voice.stop() }
     }
 
     @ViewBuilder
