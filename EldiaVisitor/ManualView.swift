@@ -19,7 +19,12 @@ struct ManualRootView: View {
                             case .card(let id): ManualPlayerView(cardID: id, editingCard: $editingCard)
                             }
                         }
-                        .toolbar { editToolbar }
+                        // 標準の「<」だけでは分かりにくいので、行き先を書いた大きな戻るボタンにする
+                        .navigationBarBackButtonHidden(true)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) { backButton(for: route) }
+                            editToolbar
+                        }
                     }
                     .toolbar { editToolbar }
             }
@@ -40,22 +45,54 @@ struct ManualRootView: View {
                 Button {
                     manual.endEditing()
                 } label: {
-                    Label("編集を終える", systemImage: "checkmark.circle.fill").labelStyle(.titleAndIcon)
+                    BarPill(title: "編集を終える", symbol: "checkmark.circle.fill", fill: Palette.sunday, foreground: .white)
                 }
-                .tint(Palette.sunday)
+                .buttonStyle(.plain)
             } else {
                 Button {
                     if manual.canEdit { manual.editing = true } else { showAdminLogin = true }
                 } label: {
-                    Label("編集", systemImage: "pencil").labelStyle(.titleAndIcon)
+                    BarPill(title: "編集", symbol: "pencil", fill: Color(hex: 0xE9E9EE), foreground: Palette.ink2)
                 }
+                .buttonStyle(.plain)
             }
         }
+    }
+
+    /// 1つ前の画面の名前（戻るボタンに書く）
+    private func backTitle(for route: ManualRoute) -> String {
+        guard let i = manual.path.lastIndex(of: route), i > 0 else { return "ホーム" }
+        if case .category(let c) = manual.path[i - 1] { return c.label }
+        return "前の画面"
+    }
+
+    private func backButton(for route: ManualRoute) -> some View {
+        Button {
+            if !manual.path.isEmpty { manual.path.removeLast() }
+        } label: {
+            BarPill(title: "\(backTitle(for: route)) に戻る", symbol: "chevron.left",
+                    fill: Color(hex: 0xE9E9EE), foreground: Palette.ink2)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(backTitle(for: route)) に戻る")
     }
 
     /// どの画面からでも、すぐ来店記録に戻れるバー（来店の記録漏れを防ぐ）
     private var backToRecordBar: some View {
         HStack(spacing: 12) {
+            if !manual.path.isEmpty {
+                Button {
+                    manual.path.removeAll()
+                } label: {
+                    Label("マニュアルのホーム", systemImage: "house.fill")
+                        .font(.headline)
+                        .foregroundStyle(Palette.ink2)
+                        .padding(.horizontal, 20)
+                        .frame(minHeight: 48)
+                        .background(Color(hex: 0xE9E9EE), in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
             if manual.editing {
                 Label("編集中", systemImage: "pencil.circle.fill")
                     .font(.subheadline.weight(.bold))
@@ -525,9 +562,9 @@ struct ManualPlayerView: View {
         Button {
             back()
         } label: {
-            Label("戻る", systemImage: "arrow.left")
+            Label("前のステップ", systemImage: "arrow.left")
                 .font(.headline)
-                .frame(minWidth: 110, minHeight: 60)
+                .frame(minWidth: 160, minHeight: 60)
         }
         .buttonStyle(.bordered)
         .disabled(run?.history.isEmpty ?? true)
@@ -636,6 +673,26 @@ struct ImageZoomView: View {
             .buttonStyle(.plain)
             .padding(24)
         }
+    }
+}
+
+/// ツールバー用のボタンの見た目（標準の Label だとアイコンだけになることがあるため）
+struct BarPill: View {
+    let title: String
+    let symbol: String
+    let fill: Color
+    let foreground: Color
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol)
+            Text(title)
+        }
+        .font(.subheadline.weight(.bold))
+        .foregroundStyle(foreground)
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .background(fill, in: Capsule())
+        .fixedSize()
     }
 }
 
