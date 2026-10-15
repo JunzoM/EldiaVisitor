@@ -145,7 +145,7 @@ struct ManualHomeView: View {
                 }
                 searchField
                 if voice.listening {
-                    Label("聞いています…話し終わると自動で止まります", systemImage: "waveform")
+                    Label("聞いています…話し終わったらボタンを離してください", systemImage: "waveform")
                         .font(.headline)
                         .foregroundStyle(Palette.sunday)
                         .symbolEffect(.variableColor.iterative, isActive: true)
@@ -195,25 +195,34 @@ struct ManualHomeView: View {
             .padding(.horizontal, 16).frame(minHeight: 52)
             .background(Color.white, in: RoundedRectangle(cornerRadius: 14))
 
-            // 音声検索（話した言葉が検索欄に入る）
-            Button {
-                voice.toggle { query = $0 }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: voice.listening ? "stop.fill" : "mic.fill")
-                    Text(voice.listening ? "止める" : "声で探す")
-                }
-                .font(.headline)
-                .foregroundStyle(.white)
-                .padding(.horizontal, 18)
-                .frame(minHeight: 52)
-                .background(voice.listening ? Palette.sunday : Palette.teal, in: RoundedRectangle(cornerRadius: 14))
-                .fixedSize()
+            // 音声検索：押している間だけ聞き取り、離すと止めて検索する
+            HStack(spacing: 6) {
+                Image(systemName: voice.listening ? "waveform" : "mic.fill")
+                Text(voice.listening ? "離すと検索" : "押して話す")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(voice.listening ? "音声検索を止める" : "声で探す")
+            .font(.headline)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 18)
+            .frame(minHeight: 52)
+            .background(voice.listening ? Palette.sunday : Palette.teal, in: RoundedRectangle(cornerRadius: 14))
+            .scaleEffect(voice.listening ? 1.06 : 1)
+            .animation(.easeOut(duration: 0.15), value: voice.listening)
+            .fixedSize()
+            .contentShape(RoundedRectangle(cornerRadius: 14))
+            .onLongPressGesture(minimumDuration: 600, maximumDistance: 120, perform: {
+                voice.release()
+            }, onPressingChanged: { down in
+                if down { voice.press() } else { voice.release() }
+            })
+            .sensoryFeedback(.start, trigger: voice.listening) { _, now in now }
+            .sensoryFeedback(.stop, trigger: voice.listening) { old, now in old && !now }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("押して話す")
+            .accessibilityHint("押している間だけ聞き取り、離すと検索します")
+            .accessibilityAddTraits(.isButton)
         }
-        .onDisappear { voice.stop() }
+        .onAppear { voice.onText = { query = $0 } }
+        .onDisappear { voice.stopAll() }
     }
 
     private var searchResults: some View {
