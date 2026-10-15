@@ -116,9 +116,6 @@ struct ManualCard: Codable, Identifiable, Hashable {
         guard let stepID else { return nil }
         return steps.firstIndex { $0.id == stepID }
     }
-
-    /// 検索用（タイトルと手順の文章）
-    var searchText: String { ([title] + steps.map(\.text)).joined(separator: " ") }
 }
 
 /// 保存の前の内容（manual_card_versions の1行）
@@ -131,8 +128,6 @@ struct ManualVersion: Decodable, Identifiable, Hashable {
     let steps: [ManualStep]
     let sort_order: Int
     let saved_at: Date
-
-    var isDelete: Bool { action == "delete" }
 }
 
 /// 閲覧中の位置（マニュアルを閉じて来店記録に戻っても、開き直すと続きから見られる）
@@ -141,6 +136,28 @@ struct ManualRun: Hashable {
     var stepID: String
     var history: [String] = []
     var finished = false
+
+    /// 次のステップへ進む。target が指定されていればそこへ（質問の はい／いいえ）、無ければ次の番号へ。
+    /// 最後のステップを越えたら完了にする
+    mutating func advance(in card: ManualCard, from step: ManualStep, to target: String?) {
+        guard let current = card.index(of: step.id) else { return }
+        let next = card.index(of: target) ?? (current + 1)
+        guard card.steps.indices.contains(next) else {
+            finished = true
+            return
+        }
+        history.append(step.id)
+        stepID = card.steps[next].id
+    }
+
+    /// 1つ前のステップに戻る（戻れなければ何もしない）
+    mutating func stepBack() {
+        guard let previous = history.popLast() else { return }
+        stepID = previous
+        finished = false
+    }
+
+    var canStepBack: Bool { !history.isEmpty }
 }
 
 enum ManualRoute: Hashable {
@@ -175,6 +192,30 @@ extension ManualCategory {
 }
 
 extension StepKind {
-    var badgeFill: Color { self == .sirius ? Color(hex: 0xF5E9C8) : Color(hex: 0xEDEDF2) }
-    var badgeText: Color { self == .sirius ? Color(hex: 0x6B4E06) : Palette.ink2 }
+    /// 編集画面の追加ボタンや、写真が無いときの表示に使うアイコン
+    var symbol: String {
+        switch self {
+        case .step: return "hand.point.up.left"
+        case .sirius: return "desktopcomputer"
+        case .question: return "questionmark.circle"
+        }
+    }
+
+    var badgeFill: Color { self == .sirius ? Palette.noticeFill : Color(hex: 0xEDEDF2) }
+    var badgeText: Color { self == .sirius ? Palette.noticeText : Palette.ink2 }
+}
+
+// MARK: - マニュアル画面で繰り返し使う色
+
+extension Palette {
+    /// 灰色のボタンの背景
+    static let chip = Color(hex: 0xE9E9EE)
+    /// 注意の帯（黄土色）の背景と文字
+    static let noticeFill = Color(hex: 0xF5E9C8)
+    static let noticeText = Color(hex: 0x6B4E06)
+    /// 「探した言葉」の背景
+    static let tealSoft = Color(hex: 0xE3F0EC)
+    /// 写真が無いときのアイコン・進み具合の未到達部分
+    static let placeholder = Color(hex: 0xC7C7CC)
+    static let track = Color(hex: 0xDADADF)
 }
