@@ -320,7 +320,8 @@ struct StepEditorRow: View {
     private var photoRow: some View {
         HStack(spacing: 12) {
             if let name = step.image {
-                ManualImage(name: name, fill: true)
+                // 140×96 の枠に収める縮小版（元の写真は最大1600ピクセル）
+                ManualImage(name: name, fill: true, maxPixel: 600)
                     .frame(width: 140, height: 96)
                 Button(role: .destructive) { step.image = nil } label: {
                     Label("写真を外す", systemImage: "xmark")

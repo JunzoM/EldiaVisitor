@@ -3,7 +3,7 @@ import SwiftUI
 // MARK: - フロント業務マニュアル：データの形
 // 共通 Supabase の manual_cards（1行＝1カード、手順は steps に JSON で入る）
 
-enum ManualCategory: String, CaseIterable, Identifiable, Codable, Hashable {
+enum ManualCategory: String, CaseIterable, Identifiable, Codable, Hashable, Sendable {
     case pay, reserve, members, coupon, food, slip, sirius
     var id: String { rawValue }
 
@@ -32,7 +32,7 @@ enum ManualCategory: String, CaseIterable, Identifiable, Codable, Hashable {
     }
 }
 
-enum StepKind: String, CaseIterable, Identifiable, Codable, Hashable {
+enum StepKind: String, CaseIterable, Identifiable, Codable, Hashable, Sendable {
     /// 人がやること
     case step
     /// ALMEX-SIRIUS i での操作
@@ -51,7 +51,7 @@ enum StepKind: String, CaseIterable, Identifiable, Codable, Hashable {
 }
 
 /// 1ステップ。分岐先は番号ではなく ID で持つ（並べ替えても分岐が崩れない）
-struct ManualStep: Codable, Identifiable, Hashable {
+struct ManualStep: Codable, Identifiable, Hashable, Sendable {
     var id: String = UUID().uuidString
     var kind: StepKind = .step
     var text: String = ""
@@ -95,7 +95,7 @@ struct ManualStep: Codable, Identifiable, Hashable {
     }
 }
 
-struct ManualCard: Codable, Identifiable, Hashable {
+struct ManualCard: Codable, Identifiable, Hashable, Sendable {
     var id: UUID
     var category: ManualCategory
     var title: String
@@ -119,7 +119,7 @@ struct ManualCard: Codable, Identifiable, Hashable {
 }
 
 /// 保存の前の内容（manual_card_versions の1行）
-struct ManualVersion: Decodable, Identifiable, Hashable {
+struct ManualVersion: Decodable, Identifiable, Hashable, Sendable {
     let id: Int
     let card_id: UUID
     let action: String
@@ -131,7 +131,7 @@ struct ManualVersion: Decodable, Identifiable, Hashable {
 }
 
 /// 閲覧中の位置（マニュアルを閉じて来店記録に戻っても、開き直すと続きから見られる）
-struct ManualRun: Hashable {
+struct ManualRun: Hashable, Sendable {
     let cardID: UUID
     var stepID: String
     var history: [String] = []
@@ -160,7 +160,7 @@ struct ManualRun: Hashable {
     var canStepBack: Bool { !history.isEmpty }
 }
 
-enum ManualRoute: Hashable {
+enum ManualRoute: Hashable, Sendable {
     case category(ManualCategory)
     case card(UUID)
 }

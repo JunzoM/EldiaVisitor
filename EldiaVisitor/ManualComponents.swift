@@ -106,6 +106,8 @@ struct BarPill: View {
 struct ManualImage: View {
     let name: String
     var fill = false
+    /// 小さく表示するときは、長い辺をこの大きさ（ピクセル）に縮めて読み込む
+    var maxPixel: CGFloat?
     @Environment(ManualStore.self) private var manual
     @State private var image: UIImage?
     @State private var failed = false
@@ -128,7 +130,7 @@ struct ManualImage: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 18))
         .task(id: name) {
-            image = await manual.image(name)
+            image = await manual.image(name, maxPixel: maxPixel)
             failed = image == nil
         }
     }

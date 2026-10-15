@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import ImageIO
 import Observation
 
 /// フロントマニュアルの読み込み・端末内保存・編集。
@@ -154,7 +155,7 @@ final class ManualStore {
         ManualCache.saveCards(cards)
     }
 
-    /// カードの並び順を1つ上下に動かす
+    /// カードの並び順を1つ上下に動かす（カテゴリ内の並びをまとめて1回の通信で保存）
     func move(_ card: ManualCard, by offset: Int) async throws {
         var list = cards(in: card.category)
         guard let i = list.firstIndex(where: { $0.id == card.id }) else { return }
@@ -162,14 +163,22 @@ final class ManualStore {
         guard list.indices.contains(j) else { return }
         list.swapAt(i, j)
         let token = try await editToken()
-        for (order, c) in list.enumerated() where c.sort_order != order {
-            _ = try await request("rest/v1/manual_cards", method: "PATCH",
-                                  query: [SupabaseRequest.eq("id", c.id)],
-                                  body: try JSONSerialization.data(withJSONObject: ["sort_order": order]),
-                                  headers: ["Prefer": "return=minimal"], token: token)
-            if let k = cards.firstIndex(where: { $0.id == c.id }) { cards[k].sort_order = order }
-        }
+        let ids = list.map { $0.id.uuidString.lowercased() }
+        _ = try await request("rest/v1/rpc/manual_set_order", method: "POST",
+                              body: try JSONSerialization.data(withJSONObject: ["p_ids": ids]),
+                              headers: ["Prefer": "return=minimal"], token: token)
+        applyLocalOrder(list.map(\.id))
         ManualCache.saveCards(cards)
+    }
+
+    /// 端末内のカードにも、新しい並び順（0,1,2…）を反映する（作り直しは1回だけ）
+    private func applyLocalOrder(_ ids: [UUID]) {
+        let order = Dictionary(ids.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+        var updated = cards
+        for k in updated.indices {
+            if let n = order[updated[k].id], updated[k].sort_order != n { updated[k].sort_order = n }
+        }
+        cards = updated
     }
 
     // MARK: 変更前の版
@@ -219,15 +228,21 @@ final class ManualStore {
     }
 
     /// 端末内にあればそれを、無ければダウンロードして返す（読み込みと画像の展開は裏で行い、画面を止めない）
-    func image(_ name: String) async -> UIImage? {
-        if let img = imageMemory.object(forKey: name as NSString) { return img }
+    /// maxPixel を渡すと、長い辺をその大きさに縮めた画像を返す（小さく表示するときのメモリ節約）
+    func image(_ name: String, maxPixel: CGFloat? = nil) async -> UIImage? {
+        let key = (maxPixel.map { "\(name)@\(Int($0))" } ?? name) as NSString
+        if let img = imageMemory.object(forKey: key) { return img }
         let file = ManualCache.imageFile(name)
-        var img = await ManualImages.decodeFile(file)
+        var img: UIImage?
+        if let data = await ManualImages.readFile(file) {
+            img = await ManualImages.make(data, maxPixel: maxPixel)
+        }
+        // 端末に無い、または壊れていたらダウンロードし直す
         if img == nil, let data = await downloadImage(name) {
             try? data.write(to: file, options: .atomic)
-            img = await ManualImages.decode(data)
+            img = await ManualImages.make(data, maxPixel: maxPixel)
         }
-        if let img { imageMemory.setObject(img, forKey: name as NSString) }
+        if let img { imageMemory.setObject(img, forKey: key) }
         return img
     }
 
@@ -327,9 +342,25 @@ enum ManualCache {
         return (try? ISODate.decoder.decode([ManualCard].self, from: data)) ?? []
     }
 
+    /// 書き込みは画面の処理の外で、頼まれた順に1つずつ行う（古い内容が新しい内容を上書きしないように）
+    private static let writeQueue = DispatchQueue(label: "manual-cache-write", qos: .utility)
+
+    /// 書き込み専用の JSON 変換（ISODate.encoder と同じ日時の書き方。画面側と同時に使わないよう別に持つ）
+    private static let encoder: JSONEncoder = {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .custom { date, enc in
+            var c = enc.singleValueContainer()
+            try c.encode(ISODate.string(date))
+        }
+        return e
+    }()
+
     static func saveCards(_ cards: [ManualCard]) {
-        if let data = try? ISODate.encoder.encode(cards) {
-            try? data.write(to: cardsFile, options: .atomic)
+        let file = cardsFile
+        writeQueue.async {
+            if let data = try? encoder.encode(cards) {
+                try? data.write(to: file, options: .atomic)
+            }
         }
     }
 }
@@ -349,22 +380,31 @@ enum ManualImages {
         }
     }
 
-    /// ファイルを読み込んで、表示できる状態まで展開する（メインスレッドの外で）
-    static func decodeFile(_ url: URL) async -> UIImage? {
-        await Task.detached(priority: .userInitiated) {
-            guard let data = try? Data(contentsOf: url) else { return nil }
-            return await prepared(data)
+    /// ファイルを読み込む（メインスレッドの外で）
+    static func readFile(_ url: URL) async -> Data? {
+        await Task.detached(priority: .userInitiated) { try? Data(contentsOf: url) }.value
+    }
+
+    /// 表示できる状態まで展開する（メインスレッドの外で）。maxPixel があれば縮小版を作る
+    static func make(_ data: Data, maxPixel: CGFloat?) async -> UIImage? {
+        await Task.detached(priority: .userInitiated) { () async -> UIImage? in
+            if let maxPixel { return thumbnail(data, maxPixel: maxPixel) }
+            guard let img = UIImage(data: data) else { return nil }
+            return await img.byPreparingForDisplay() ?? img
         }.value
     }
 
-    /// データを表示できる状態まで展開する（メインスレッドの外で）
-    static func decode(_ data: Data) async -> UIImage? {
-        await Task.detached(priority: .userInitiated) { await prepared(data) }.value
-    }
-
-    private static func prepared(_ data: Data) async -> UIImage? {
-        guard let img = UIImage(data: data) else { return nil }
-        return await img.byPreparingForDisplay() ?? img
+    /// 元の画像を全部展開せずに、縮小版だけを作る（ImageIO）
+    private static func thumbnail(_ data: Data, maxPixel: CGFloat) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel
+        ]
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return UIImage(cgImage: cg)
     }
 }
 
