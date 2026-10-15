@@ -13,6 +13,7 @@ struct ManualRootView: View {
         VStack(spacing: 0) {
             NavigationStack(path: $manual.path) {
                 ManualHomeView(editingCard: $editingCard)
+                    .background(SwipeBackEnabler().frame(width: 0, height: 0))
                     .navigationDestination(for: ManualRoute.self) { route in
                         Group {
                             switch route {
@@ -731,15 +732,30 @@ extension JST {
     static let shortDate = formatter("yyyy/M/d")
 }
 
-/// 戻るボタンを自前にすると画面左端からのスワイプで戻れなくなるため、スワイプを有効に戻す
-/// （1つ目の画面ではスワイプしない）
-extension UINavigationController: UIGestureRecognizerDelegate {
-    override open func viewDidLoad() {
-        super.viewDidLoad()
-        interactivePopGestureRecognizer?.delegate = self
-    }
+/// 戻るボタンを自前にすると画面左端からのスワイプで戻れなくなるため、マニュアルの画面だけスワイプを有効に戻す。
+/// iOS 全体の部品（UINavigationController）は書き換えず、マニュアルのホームに置いた見えない部品が担当する。
+struct SwipeBackEnabler: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> Controller { Controller() }
+    func updateUIViewController(_ uiViewController: Controller, context: Context) { uiViewController.attach() }
 
-    public func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        viewControllers.count > 1
+    final class Controller: UIViewController, UIGestureRecognizerDelegate {
+        private weak var nav: UINavigationController?
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            attach()
+        }
+
+        func attach() {
+            guard let n = navigationController ?? parent?.navigationController else { return }
+            nav = n
+            n.interactivePopGestureRecognizer?.isEnabled = true
+            n.interactivePopGestureRecognizer?.delegate = self
+        }
+
+        /// 1つ目の画面（マニュアルのホーム）ではスワイプしない
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            (nav?.viewControllers.count ?? 0) > 1
+        }
     }
 }
