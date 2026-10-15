@@ -34,13 +34,14 @@ struct ManualEditorView: View {
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Palette.sunday)
                     }
+                    let numbers = stepNumbers
                     ForEach($draft.steps) { $step in
                         StepEditorRow(step: $step,
-                                      number: number(of: step.id),
+                                      number: numbers[step.id] ?? 1,
                                       isFirst: step.id == draft.steps.first?.id,
                                       isLast: step.id == draft.steps.last?.id,
                                       others: draft.steps.filter { $0.id != step.id },
-                                      numberOf: number(of:),
+                                      numberOf: { numbers[$0] ?? 1 },
                                       tint: draft.category.tint,
                                       focus: $focusedStep,
                                       onMove: { move(step.id, $0) },
@@ -119,7 +120,7 @@ struct ManualEditorView: View {
                         draft.steps.append(s)
                         focusedStep = s.id
                     } label: {
-                        Label(k.label, systemImage: k == .question ? "questionmark.circle" : (k == .sirius ? "desktopcomputer" : "hand.point.up.left"))
+                        Label(k.label, systemImage: k.symbol)
                             .frame(maxWidth: .infinity, minHeight: 46)
                     }
                     .buttonStyle(.bordered)
@@ -150,8 +151,9 @@ struct ManualEditorView: View {
 
     // MARK: 操作
 
-    private func number(of id: String) -> Int {
-        (draft.steps.firstIndex { $0.id == id } ?? 0) + 1
+    /// ステップの ID → 番号（1から）。ステップごと・選択肢ごとに数え直さないよう、まとめて1回だけ作る
+    private var stepNumbers: [String: Int] {
+        Dictionary(draft.steps.enumerated().map { ($1.id, $0 + 1) }, uniquingKeysWith: { first, _ in first })
     }
 
     private func move(_ id: String, _ d: Int) {
@@ -318,7 +320,8 @@ struct StepEditorRow: View {
     private var photoRow: some View {
         HStack(spacing: 12) {
             if let name = step.image {
-                ManualImage(name: name, fill: true)
+                // 140×96 の枠に収める縮小版（元の写真は最大1600ピクセル）
+                ManualImage(name: name, fill: true, maxPixel: 600)
                     .frame(width: 140, height: 96)
                 Button(role: .destructive) { step.image = nil } label: {
                     Label("写真を外す", systemImage: "xmark")
@@ -328,8 +331,9 @@ struct StepEditorRow: View {
             if uploading {
                 ProgressView("アップロード中…")
             } else {
+                let pickTitle = step.image == nil ? "写真を選ぶ" : "写真を変える"
                 PhotosPicker(selection: $pickerItem, matching: .images) {
-                    Label(step.image == nil ? "写真を選ぶ" : "写真を変える", systemImage: "photo.on.rectangle")
+                    Label(pickTitle, systemImage: "photo.on.rectangle")
                 }
                 .buttonStyle(.bordered)
                 if UIImagePickerController.isSourceTypeAvailable(.camera) {
@@ -458,35 +462,17 @@ struct VersionsSheet: View {
     @State private var error: String?
 
     var body: some View {
-        NavigationStack {
-            List {
-                if let error { Text(error).foregroundStyle(Palette.sunday) }
-                if let versions, versions.isEmpty {
-                    Text("以前の内容はまだありません").foregroundStyle(Palette.sub)
-                }
-                ForEach(versions ?? []) { v in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(v.title).font(.headline)
-                            Text("\(JST.csv.string(from: v.saved_at)) より前・\(v.steps.count) ステップ")
-                                .font(.caption).foregroundStyle(Palette.sub)
-                        }
-                        Spacer()
-                        Button("この内容に戻す") {
-                            onPick(v)
-                            dismiss()
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                }
+        VersionListSheet(title: "以前の内容", emptyText: "以前の内容はまだありません",
+                         items: versions, error: error,
+                         subtitle: { "\(JST.csv.string(from: $0.saved_at)) より前・\($0.steps.count) ステップ" }) { v in
+            Button("この内容に戻す") {
+                onPick(v)
+                dismiss()
             }
-            .overlay { if versions == nil && error == nil { ProgressView() } }
-            .navigationTitle("以前の内容")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
-            .task {
-                do { versions = try await manual.versions(of: cardID) } catch { self.error = error.localizedDescription }
-            }
+            .buttonStyle(.bordered)
+        }
+        .task {
+            do { versions = try await manual.versions(of: cardID) } catch { self.error = error.localizedDescription }
         }
     }
 }
@@ -496,41 +482,22 @@ struct VersionsSheet: View {
 struct DeletedCardsSheet: View {
     let category: ManualCategory
     @Environment(ManualStore.self) private var manual
-    @Environment(\.dismiss) private var dismiss
     @State private var items: [ManualVersion]?
     @State private var error: String?
     @State private var restoring: Int?
 
     var body: some View {
-        NavigationStack {
-            List {
-                if let error { Text(error).foregroundStyle(Palette.sunday) }
-                if let items, items.isEmpty {
-                    Text("削除したカードはありません").foregroundStyle(Palette.sub)
-                }
-                ForEach(items ?? []) { v in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(v.title).font(.headline)
-                            Text("\(JST.csv.string(from: v.saved_at)) に削除・\(v.steps.count) ステップ")
-                                .font(.caption).foregroundStyle(Palette.sub)
-                        }
-                        Spacer()
-                        if restoring == v.id {
-                            ProgressView()
-                        } else {
-                            Button("元に戻す") { Task { await restore(v) } }
-                                .buttonStyle(.bordered)
-                        }
-                    }
-                }
+        VersionListSheet(title: "削除した\(category.label)のカード", emptyText: "削除したカードはありません",
+                         items: items, error: error,
+                         subtitle: { "\(JST.csv.string(from: $0.saved_at)) に削除・\($0.steps.count) ステップ" }) { v in
+            if restoring == v.id {
+                ProgressView()
+            } else {
+                Button("元に戻す") { Task { await restore(v) } }
+                    .buttonStyle(.bordered)
             }
-            .overlay { if items == nil && error == nil { ProgressView() } }
-            .navigationTitle("削除した\(category.label)のカード")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
-            .task { await load() }
         }
+        .task { await load() }
     }
 
     private func load() async {
@@ -545,6 +512,42 @@ struct DeletedCardsSheet: View {
             items?.removeAll { $0.card_id == v.card_id }
         } catch {
             self.error = "元に戻せませんでした：\(error.localizedDescription)"
+        }
+    }
+}
+
+/// 「以前の内容」「削除したカード」で共通の一覧シート（読み込み中・空・エラーの表示と閉じるボタン）
+private struct VersionListSheet<Trailing: View>: View {
+    let title: String
+    let emptyText: String
+    let items: [ManualVersion]?
+    let error: String?
+    let subtitle: (ManualVersion) -> String
+    @ViewBuilder let trailing: (ManualVersion) -> Trailing
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if let error { Text(error).foregroundStyle(Palette.sunday) }
+                if let items, items.isEmpty {
+                    Text(emptyText).foregroundStyle(Palette.sub)
+                }
+                ForEach(items ?? []) { v in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(v.title).font(.headline)
+                            Text(subtitle(v)).font(.caption).foregroundStyle(Palette.sub)
+                        }
+                        Spacer()
+                        trailing(v)
+                    }
+                }
+            }
+            .overlay { if items == nil && error == nil { ProgressView() } }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("閉じる") { dismiss() } } }
         }
     }
 }

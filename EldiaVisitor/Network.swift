@@ -78,6 +78,15 @@ enum SupabaseRequest {
     }
 
     static func bodyText(_ data: Data) -> String { String(data: data, encoding: .utf8) ?? "" }
+
+    /// 「列 = 値」の絞り込み（PostgREST の eq.）
+    static func eq(_ field: String, _ value: String) -> URLQueryItem {
+        URLQueryItem(name: field, value: "eq.\(value)")
+    }
+
+    static func eq(_ field: String, _ id: UUID) -> URLQueryItem {
+        eq(field, id.uuidString.lowercased())
+    }
 }
 
 // MARK: - ログイン（共通ログイン = Supabase Auth）
@@ -112,9 +121,13 @@ final class AuthManager {
     var email: String { session?.email ?? "" }
 
     func signIn(email: String, password: String) async throws {
+        store(try await Self.passwordSession(email: email, password: password))
+    }
+
+    /// メールとパスワードでログインし、セッションを返す（端末には保存しない。マニュアル編集の管理者ログインでも使う）
+    static func passwordSession(email: String, password: String) async throws -> AuthSession {
         let body = try JSONSerialization.data(withJSONObject: ["email": email, "password": password])
-        let s = try await token(grant: "password", body: body, fallbackEmail: email)
-        store(s)
+        return try await requestToken(grant: "password", body: body, fallbackEmail: email)
     }
 
     func signOut() {
@@ -134,7 +147,7 @@ final class AuthManager {
         guard let s = session else { throw APIError.notLoggedIn }
         let t = Task { () throws -> AuthSession in
             let body = try JSONSerialization.data(withJSONObject: ["refresh_token": s.refreshToken])
-            return try await self.token(grant: "refresh_token", body: body, fallbackEmail: s.email)
+            return try await Self.requestToken(grant: "refresh_token", body: body, fallbackEmail: s.email)
         }
         refreshTask = t
         defer { refreshTask = nil }
@@ -148,7 +161,7 @@ final class AuthManager {
         }
     }
 
-    private func token(grant: String, body: Data, fallbackEmail: String) async throws -> AuthSession {
+    private static func requestToken(grant: String, body: Data, fallbackEmail: String) async throws -> AuthSession {
         let req = SupabaseRequest.make(path: "auth/v1/token",
                                        method: "POST",
                                        query: [URLQueryItem(name: "grant_type", value: grant)],
