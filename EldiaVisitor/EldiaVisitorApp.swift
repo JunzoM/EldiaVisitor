@@ -4,11 +4,13 @@ import SwiftUI
 struct EldiaVisitorApp: App {
     @State private var auth: AuthManager
     @State private var logs: LogStore
+    @State private var manual: ManualStore
 
     init() {
         let a = AuthManager()
         _auth = State(initialValue: a)
         _logs = State(initialValue: LogStore(api: API(auth: a)))
+        _manual = State(initialValue: ManualStore(auth: a))
     }
 
     var body: some Scene {
@@ -16,6 +18,7 @@ struct EldiaVisitorApp: App {
             RootView()
                 .environment(auth)
                 .environment(logs)
+                .environment(manual)
                 .preferredColorScheme(.light)
                 .onAppear {
                     // 24時間モニターを見ながら使うので画面を消さない
@@ -28,6 +31,7 @@ struct EldiaVisitorApp: App {
 struct RootView: View {
     @Environment(AuthManager.self) private var auth
     @Environment(LogStore.self) private var logs
+    @Environment(ManualStore.self) private var manual
 
     var body: some View {
         Group {
@@ -36,6 +40,8 @@ struct RootView: View {
             } else {
                 RecordView()
                     .task { logs.start() }
+                    // 回線が切れても見られるよう、マニュアルを先に端末へ保存しておく
+                    .task { await manual.load() }
             }
         }
         .animation(.default, value: auth.session == nil)

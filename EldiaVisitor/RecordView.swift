@@ -4,7 +4,9 @@ import SwiftUI
 struct RecordView: View {
     @Environment(AuthManager.self) private var auth
     @Environment(LogStore.self) private var logs
+    @Environment(ManualStore.self) private var manual
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @State private var showManual = false
     @State private var drafts: [StoreID: Draft] = [.modern: Draft(), .luxury: Draft()]
     @State private var selected: StoreID = .modern
     @State private var confirmLogout = false
@@ -73,6 +75,15 @@ struct RecordView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showManual = true
+                    } label: {
+                        Label(manual.run.map { $0.finished ? "マニュアル" : "マニュアル（続き）" } ?? "マニュアル",
+                              systemImage: "book.pages")
+                            .labelStyle(.titleAndIcon)
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink {
                         AnalysisView()
                     } label: {
@@ -80,6 +91,9 @@ struct RecordView: View {
                             .labelStyle(.titleAndIcon)
                     }
                 }
+            }
+            .fullScreenCover(isPresented: $showManual, onDismiss: { manual.endEditing() }) {
+                ManualRootView()
             }
             .confirmationDialog("ログアウトしますか？", isPresented: $confirmLogout, titleVisibility: .visible) {
                 Button("ログアウト", role: .destructive) {
