@@ -15,7 +15,7 @@ enum ManualCategory: String, CaseIterable, Identifiable, Codable, Hashable {
         case .coupon: return "クーポン"
         case .food: return "食事"
         case .slip: return "伝票"
-        case .sirius: return "シリウス操作"
+        case .sirius: return "その他操作"
         }
     }
 
@@ -27,7 +27,7 @@ enum ManualCategory: String, CaseIterable, Identifiable, Codable, Hashable {
         case .coupon: return "ticket"
         case .food: return "fork.knife"
         case .slip: return "doc.text"
-        case .sirius: return "desktopcomputer"
+        case .sirius: return "square.grid.2x2"
         }
     }
 }
