@@ -78,10 +78,19 @@ struct RecordView: View {
                     Button {
                         showManual = true
                     } label: {
-                        Label(manual.run.map { $0.finished ? "マニュアル" : "マニュアル（続き）" } ?? "マニュアル",
-                              systemImage: "book.pages")
-                            .labelStyle(.titleAndIcon)
+                        // ツールバーは Label だとアイコンだけになるので、文字を必ず出す自前の見た目にする
+                        HStack(spacing: 6) {
+                            Image(systemName: "book.pages")
+                            Text(manual.run.map { $0.finished ? "マニュアル" : "マニュアル（続き）" } ?? "マニュアル")
+                        }
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14).padding(.vertical, 7)
+                        .background(Palette.teal, in: Capsule())
+                        .fixedSize()
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("フロントマニュアルを開く")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink {
