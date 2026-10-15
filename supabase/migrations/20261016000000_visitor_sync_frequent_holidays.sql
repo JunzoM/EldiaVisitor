@@ -1,5 +1,6 @@
 -- 来店記録アプリ：通信の削減・よく使う組み合わせ・祝日表の自動補充
 -- 共通の Supabase プロジェクト（cleaning-log）に適用する。何度流しても同じ結果になる。
+-- 2026-10-16 に本番へ反映済み。
 
 -- =========================================================
 -- 1. 同期を1回の呼び出しにまとめる（直前5組×2店舗＋今日の件数）
@@ -92,60 +93,66 @@ create schema if not exists private;
 create or replace function private.jp_holidays_for(p_year int)
 returns table(d date, name text)
 language plpgsql
-volatile
+immutable
 set search_path = ''
 as $$
 declare
   k int := p_year - 1980;
-  spring int := floor(20.8431 + 0.242194 * k - floor(k / 4.0));
-  autumn int := floor(23.2488 + 0.242194 * k - floor(k / 4.0));
-  h record;
+  ds date[];
+  ns text[];
+  i int;
   x date;
+  n int;
 begin
   if p_year < 2020 or p_year > 2099 then
     raise exception '2020〜2099年のみ対応: %', p_year;
   end if;
 
-  create temp table if not exists _h(d date primary key, name text) on commit drop;
-  delete from _h;
-
   -- 第n月曜日 = 1日 + (その週の月曜までの日数) + 7×(n-1)
-  insert into _h values
-    (make_date(p_year, 1, 1), '元日'),
-    (make_date(p_year, 1, 1) + ((8 - extract(isodow from make_date(p_year, 1, 1))::int) % 7) + 7, '成人の日'),
-    (make_date(p_year, 2, 11), '建国記念の日'),
-    (make_date(p_year, 2, 23), '天皇誕生日'),
-    (make_date(p_year, 3, spring), '春分の日'),
-    (make_date(p_year, 4, 29), '昭和の日'),
-    (make_date(p_year, 5, 3), '憲法記念日'),
-    (make_date(p_year, 5, 4), 'みどりの日'),
-    (make_date(p_year, 5, 5), 'こどもの日'),
-    (make_date(p_year, 7, 1) + ((8 - extract(isodow from make_date(p_year, 7, 1))::int) % 7) + 14, '海の日'),
-    (make_date(p_year, 8, 11), '山の日'),
-    (make_date(p_year, 9, 1) + ((8 - extract(isodow from make_date(p_year, 9, 1))::int) % 7) + 14, '敬老の日'),
-    (make_date(p_year, 9, autumn), '秋分の日'),
-    (make_date(p_year, 10, 1) + ((8 - extract(isodow from make_date(p_year, 10, 1))::int) % 7) + 7, 'スポーツの日'),
-    (make_date(p_year, 11, 3), '文化の日'),
-    (make_date(p_year, 11, 23), '勤労感謝の日');
+  ds := array[
+    make_date(p_year, 1, 1),
+    make_date(p_year, 1, 1) + ((8 - extract(isodow from make_date(p_year, 1, 1))::int) % 7) + 7,
+    make_date(p_year, 2, 11),
+    make_date(p_year, 2, 23),
+    make_date(p_year, 3, floor(20.8431 + 0.242194 * k - floor(k / 4.0))::int),
+    make_date(p_year, 4, 29),
+    make_date(p_year, 5, 3),
+    make_date(p_year, 5, 4),
+    make_date(p_year, 5, 5),
+    make_date(p_year, 7, 1) + ((8 - extract(isodow from make_date(p_year, 7, 1))::int) % 7) + 14,
+    make_date(p_year, 8, 11),
+    make_date(p_year, 9, 1) + ((8 - extract(isodow from make_date(p_year, 9, 1))::int) % 7) + 14,
+    make_date(p_year, 9, floor(23.2488 + 0.242194 * k - floor(k / 4.0))::int),
+    make_date(p_year, 10, 1) + ((8 - extract(isodow from make_date(p_year, 10, 1))::int) % 7) + 7,
+    make_date(p_year, 11, 3),
+    make_date(p_year, 11, 23)];
+  ns := array['元日', '成人の日', '建国記念の日', '天皇誕生日', '春分の日', '昭和の日', '憲法記念日', 'みどりの日',
+              'こどもの日', '海の日', '山の日', '敬老の日', '秋分の日', 'スポーツの日', '文化の日', '勤労感謝の日'];
 
   -- 国民の休日：前日と翌日が祝日で、その日自体は祝日でも日曜でもない日
-  insert into _h
-  select a.d + 1, '国民の休日'
-  from _h a
-  join _h b on b.d = a.d + 2
-  where not exists (select 1 from _h c where c.d = a.d + 1)
-    and extract(isodow from a.d + 1) <> 7;
-
-  -- 振替休日：日曜の祝日のあと、最初の祝日でない日
-  for h in select t.d from _h t where extract(isodow from t.d) = 7 order by t.d loop
-    x := h.d + 1;
-    while exists (select 1 from _h t where t.d = x) loop
-      x := x + 1;
-    end loop;
-    insert into _h values (x, '振替休日');
+  n := array_length(ds, 1);
+  for i in 1 .. n loop
+    x := ds[i] + 1;
+    if (ds[i] + 2) = any(ds) and not (x = any(ds)) and extract(isodow from x) <> 7 then
+      ds := ds || x;
+      ns := ns || '国民の休日'::text;
+    end if;
   end loop;
 
-  return query select t.d, t.name from _h t order by t.d;
+  -- 振替休日：日曜の祝日のあと、最初の祝日でない日
+  n := array_length(ds, 1);
+  for i in 1 .. n loop
+    if extract(isodow from ds[i]) = 7 then
+      x := ds[i] + 1;
+      while x = any(ds) loop
+        x := x + 1;
+      end loop;
+      ds := ds || x;
+      ns := ns || '振替休日'::text;
+    end if;
+  end loop;
+
+  return query select u.d, u.name from unnest(ds, ns) as u(d, name) order by u.d;
 end;
 $$;
 
