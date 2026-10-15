@@ -12,6 +12,13 @@ struct DayCount {
     var people = 0
 }
 
+/// サーバーにある「今日（営業日）」の記録の、店舗ごとの集計
+struct ServerTodaySummary {
+    var count = DayCount()
+    /// 二重に数えないための記録の識別子
+    var keys = Set<UUID>()
+}
+
 /// 記録の保存・送信・直近履歴の管理。
 /// 記録はまず端末内に保存し、通信できたら送信する（電波が悪くても記録が消えない）。
 @MainActor
@@ -21,13 +28,18 @@ final class LogStore {
 
     private(set) var pending: [VisitorLog] = []
     private(set) var serverRecent: [StoreID: [VisitorLog]] = [:]
-    private(set) var serverToday: [TodayRow] = []
     private(set) var lastSync: Date?
     private(set) var lastError: String?
 
+    /// サーバーから取った今日の記録（店舗ごとに集計済み。画面を描くたびに数え直さない）
+    private var serverToday: [StoreID: ServerTodaySummary] = [:]
+    @ObservationIgnored private var serverTodayRows: [TodayRow] = []
     @ObservationIgnored private var loop: Task<Void, Never>?
     @ObservationIgnored private var isFlushing = false
     @ObservationIgnored private var todayStart = JST.startOfToday()
+
+    /// 同期の間隔（未送信の再送＋最新の取得）
+    private static let syncInterval: UInt64 = 10_000_000_000
 
     init(api: API) {
         self.api = api
@@ -41,7 +53,7 @@ final class LogStore {
         loop = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.syncNow()
-                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                try? await Task.sleep(nanoseconds: Self.syncInterval)
             }
         }
     }
@@ -50,7 +62,8 @@ final class LogStore {
         loop?.cancel()
         loop = nil
         serverRecent = [:]
-        serverToday = []
+        serverToday = [:]
+        serverTodayRows = []
     }
 
     func syncNow() async {
@@ -62,8 +75,7 @@ final class LogStore {
 
     func record(store: StoreID, draft: Draft) {
         guard draft.canRecord else { return }
-        let log = VisitorLog(store: store, segment: draft.segment, counts: draft.counts,
-                             at: Date().addingTimeInterval(-Double(draft.minutesAgo) * 60))
+        let log = VisitorLog(store: store, segment: draft.segment, counts: draft.counts, at: draft.visitDate())
         pending.append(log)
         savePending()
         Task { await self.syncNow() }
@@ -96,18 +108,13 @@ final class LogStore {
         return Array(merged.sorted { $0.log.visited_at > $1.log.visited_at }.prefix(limit))
     }
 
+    /// 今日（営業日）の組数・人数。サーバーの記録＋まだ送っていない記録（重複は除く）
     func today(for store: StoreID) -> DayCount {
-        var c = DayCount()
         let start = JST.startOfToday()
-        var keys = Set<UUID>()
-        if start == todayStart {
-            for r in serverToday where r.store == store {
-                c.groups += 1
-                c.people += r.total
-                if let k = r.client_id { keys.insert(k) }
-            }
-        }
-        for p in pending where p.store == store && p.visited_at >= start && !keys.contains(p.dedupeKey) {
+        // 日付が変わったのにまだ最新を取れていないときは、サーバー分を数えない
+        let server = start == todayStart ? (serverToday[store] ?? ServerTodaySummary()) : ServerTodaySummary()
+        var c = server.count
+        for p in pending where p.store == store && p.visited_at >= start && !server.keys.contains(p.dedupeKey) {
             c.groups += 1
             c.people += p.total
         }
@@ -139,11 +146,16 @@ final class LogStore {
             async let l = api.recent(store: .luxury)
             async let t = api.todayRows(since: start)
             let (mr, lr, tr) = try await (m, l, t)
-            serverRecent = [.modern: mr, .luxury: lr]
-            serverToday = tr
+            // 内容が変わったときだけ更新する（10秒ごとの同期で画面を無駄に描き直さない）
+            let recent: [StoreID: [VisitorLog]] = [.modern: mr, .luxury: lr]
+            if recent != serverRecent { serverRecent = recent }
+            if tr != serverTodayRows || start != todayStart {
+                serverTodayRows = tr
+                serverToday = Self.summarize(tr)
+            }
             todayStart = start
             lastSync = Date()
-            if pending.isEmpty { lastError = nil }
+            if pending.isEmpty, lastError != nil { lastError = nil }
         } catch APIError.notLoggedIn {
             stop()
         } catch {
@@ -151,13 +163,25 @@ final class LogStore {
         }
     }
 
+    private static func summarize(_ rows: [TodayRow]) -> [StoreID: ServerTodaySummary] {
+        var out: [StoreID: ServerTodaySummary] = [:]
+        for r in rows {
+            var s = out[r.store] ?? ServerTodaySummary()
+            s.count.groups += 1
+            s.count.people += r.total
+            if let k = r.client_id { s.keys.insert(k) }
+            out[r.store] = s
+        }
+        return out
+    }
+
     // MARK: 端末内保存
 
-    private static var pendingURL: URL {
+    private static let pendingURL: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("pending-visitor-logs.json")
-    }
+    }()
 
     private static func loadPending() -> [VisitorLog] {
         guard let data = try? Data(contentsOf: pendingURL) else { return [] }
