@@ -29,6 +29,8 @@ jobs:
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
             build 2>&1 | tee build.log | grep -E "error:|warning: .*deprecated|BUILD (SUCCEEDED|FAILED)" || true
+          # コンパイルエラーは注記にも出す（ログを開かなくても原因が分かるように）
+          grep -E "^/.*: error: " build.log | sort -u | head -20 | sed -E 's#^.*/(EldiaVisitor[A-Za-z]*/[A-Za-z]+\.swift):([0-9]+):[0-9]+: error: (.*)$#::error file=\1,line=\2::\3#' || true
           grep -q "BUILD SUCCEEDED" build.log
       - name: Check Info.plist
         run: |

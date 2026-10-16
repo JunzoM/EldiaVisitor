@@ -16,7 +16,7 @@ struct RecordView: View {
     @State private var confirmLogout = false
     @State private var landscape = false
 
-    private let isPhone = UIDevice.current.userInterfaceIdiom == .phone
+    private var isPhone: Bool { UIDevice.current.userInterfaceIdiom == .phone }
     private var isWide: Bool { !isPhone && sizeClass == .regular }
     /// iPad 横向き：時計を上のバーに移し、ボタンを低くして1画面に収める
     private var compact: Bool { isWide && landscape }

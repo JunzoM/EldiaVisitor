@@ -43,7 +43,7 @@ struct RootView: View {
                     .task { if !DemoMode.enabled { logs.start() } }
                     // 回線が切れても見られるよう、マニュアルを先に端末へ保存しておく
                     .task { if !DemoMode.enabled { await manual.load() } }
-                    .task { if DemoMode.landscape { DemoMode.rotateToLandscape() } }
+                    .task { if DemoMode.landscape { await DemoMode.rotateToLandscape() } }
             }
         }
         .animation(.default, value: auth.session == nil)
