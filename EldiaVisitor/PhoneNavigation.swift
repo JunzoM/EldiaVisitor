@@ -72,6 +72,7 @@ struct AccountMenuItems: View {
 }
 
 /// マニュアルのボタンの文字（途中まで見ていれば「続き」）
+@MainActor
 private func manualTitle(_ manual: ManualStore) -> String {
     manual.run.map { $0.finished ? "フロントマニュアル" : "フロントマニュアル（続き）" } ?? "フロントマニュアル"
 }
