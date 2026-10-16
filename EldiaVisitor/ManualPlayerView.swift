@@ -187,7 +187,7 @@ struct ManualPlayerView: View {
                 .font(.headline)
                 .frame(minWidth: 160, minHeight: 60)
         }
-        .buttonStyle(.bordered)
+        .glassButton()
         .disabled(!(run?.canStepBack ?? false))
     }
 
@@ -200,7 +200,7 @@ struct ManualPlayerView: View {
             .font(.system(size: 24, weight: .heavy))
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity, minHeight: 60)
-            .background(fill, in: RoundedRectangle(cornerRadius: 16))
+            .glassFill(RoundedRectangle(cornerRadius: 16), fill: fill, tinted: true)
         }
         .buttonStyle(.plain)
         .sensoryFeedback(.selection, trigger: run?.stepID)

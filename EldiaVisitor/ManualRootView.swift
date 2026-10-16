@@ -1,19 +1,56 @@
 import SwiftUI
 
 /// フロントマニュアル（来店記録の画面から全画面で開く）
+/// - iPad：上のバー（戻る・編集）と下のバー（ホーム・来店記録に戻る）
+/// - iPhone：来店記録と同じメニュー（縦＝左上の丸いボタン、横＝右のドック）。上には戻る・編集だけを置く
 struct ManualRootView: View {
     @Environment(ManualStore.self) private var manual
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.shellLinks) private var links
     @State private var showAdminLogin = false
     @State private var editingCard: ManualCard?
+    @State private var landscape = false
+
+    private var isPhone: Bool { DeviceKind.isPhone }
 
     var body: some View {
+        Group {
+            if isPhone {
+                if landscape { phoneLandscape } else { phonePortrait }
+            } else {
+                VStack(spacing: 0) {
+                    navigationStack(phone: false)
+                    bottomBar
+                }
+            }
+        }
+        .background(Palette.ground)
+        .background(
+            GeometryReader { g in
+                Color.clear
+                    .onAppear { landscape = g.size.width > g.size.height }
+                    .onChange(of: g.size) { _, size in landscape = size.width > size.height }
+            }
+        )
+        .task { if !DemoMode.enabled { await manual.load() } }
+        .sheet(isPresented: $showAdminLogin) { AdminLoginSheet() }
+        .fullScreenCover(item: $editingCard) { card in
+            ManualEditorView(original: card)
+        }
+    }
+
+    // MARK: 画面の中身（ホーム → カテゴリ → カード）
+
+    private func navigationStack(phone: Bool) -> some View {
         @Bindable var manual = manual
-        VStack(spacing: 0) {
-            NavigationStack(path: $manual.path) {
-                ManualHomeView()
-                    .background(SwipeBackEnabler().frame(width: 0, height: 0))
-                    .navigationDestination(for: ManualRoute.self) { route in
+        return NavigationStack(path: $manual.path) {
+            home(phone: phone)
+                .navigationDestination(for: ManualRoute.self) { route in
+                    if phone {
+                        // iPhone は自前の上の行（戻る・編集）を使うので、標準のバーは出さない
+                        destination(for: route)
+                            .toolbar(.hidden, for: .navigationBar)
+                    } else {
                         destination(for: route)
                             // 標準の「<」だけでは分かりにくいので、行き先を書いた大きな戻るボタンにする
                             .navigationBarBackButtonHidden(true)
@@ -22,15 +59,112 @@ struct ManualRootView: View {
                                 editToolbar
                             }
                     }
-                    .toolbar { editToolbar }
-            }
-            bottomBar
+                }
         }
-        .background(Palette.ground)
-        .task { await manual.load() }
-        .sheet(isPresented: $showAdminLogin) { AdminLoginSheet() }
-        .fullScreenCover(item: $editingCard) { card in
-            ManualEditorView(original: card)
+    }
+
+    @ViewBuilder
+    private func home(phone: Bool) -> some View {
+        if phone {
+            ManualHomeView()
+                .background(SwipeBackEnabler().frame(width: 0, height: 0))
+                .toolbar(.hidden, for: .navigationBar)
+        } else {
+            ManualHomeView()
+                .background(SwipeBackEnabler().frame(width: 0, height: 0))
+                .toolbar { editToolbar }
+        }
+    }
+
+    // MARK: iPhone（来店記録と同じメニュー）
+
+    /// iPhone のメニューから行ける先（マニュアル表示中）
+    private var shellActions: AppActions {
+        AppActions(screen: .manual,
+                   selectedStore: links?.selectedStore ?? .modern,
+                   selectStore: { store in
+                       if let links { links.openRecord(store) } else { dismiss() }
+                   },
+                   record: {
+                       if let links { links.openRecord(nil) } else { dismiss() }
+                   },
+                   manual: { manual.path.removeAll() },
+                   analysis: {
+                       if let links { links.openAnalysis() } else { dismiss() }
+                   },
+                   logout: { links?.logout() })
+    }
+
+    private var phonePortrait: some View {
+        VStack(spacing: 0) {
+            phoneTopBar(reserveMenuSpace: true)
+            navigationStack(phone: true)
+        }
+        .overlay(alignment: .topLeading) {
+            ActionCluster(actions: shellActions)
+        }
+    }
+
+    private var phoneLandscape: some View {
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                phoneTopBar(reserveMenuSpace: false)
+                navigationStack(phone: true)
+            }
+            SideDock(actions: shellActions)
+                .padding(.trailing, 8)
+                .padding(.vertical, 8)
+        }
+    }
+
+    /// iPhone の上の行：［メニューの場所］［◯◯に戻る／見出し］……［編集］
+    private func phoneTopBar(reserveMenuSpace: Bool) -> some View {
+        HStack(spacing: 10) {
+            if reserveMenuSpace {
+                // 左上の丸いボタン（ActionCluster）がここに重なる
+                Color.clear.frame(width: 50, height: 50)
+            }
+            if let route = manual.path.last {
+                backButton(for: route)
+            } else {
+                Text("フロントマニュアル")
+                    .font(.title3.weight(.heavy))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            Spacer(minLength: 4)
+            phoneEditButtons
+        }
+        .padding(.leading, 16).padding(.trailing, 12)
+        .padding(.top, 4).padding(.bottom, 6)
+    }
+
+    /// 編集のボタン（編集中は「このカードを編集」「編集を終える」）
+    @ViewBuilder
+    private var phoneEditButtons: some View {
+        if manual.editing {
+            if case .card(let id) = manual.path.last, let card = manual.card(id) {
+                Button {
+                    editingCard = card
+                } label: {
+                    BarPill(title: "カード編集", symbol: "square.and.pencil", fill: Palette.chip, foreground: Palette.ink2)
+                }
+                .buttonStyle(.plain)
+            }
+            Button {
+                manual.endEditing()
+            } label: {
+                BarPill(title: "終える", symbol: "checkmark.circle.fill", fill: Palette.sunday, foreground: .white)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("編集を終える")
+        } else {
+            Button {
+                if manual.canEdit { manual.editing = true } else { showAdminLogin = true }
+            } label: {
+                BarPill(title: "編集", symbol: "pencil", fill: Palette.chip, foreground: Palette.ink2)
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -132,6 +266,6 @@ private struct BottomBarLabel: View {
             .foregroundStyle(foreground)
             .padding(.horizontal, horizontalPadding)
             .frame(minHeight: 48)
-            .background(fill, in: Capsule())
+            .glassFill(Capsule(), fill: fill, tinted: fill != Palette.chip)
     }
 }

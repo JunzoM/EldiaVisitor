@@ -9,14 +9,14 @@ struct RecordView: View {
     @Environment(LogStore.self) private var logs
     @Environment(ManualStore.self) private var manual
     @Environment(\.horizontalSizeClass) private var sizeClass
-    @State private var showManual = false
+    @State private var showManual = DemoMode.manualOpen
     @State private var showAnalysis = false
     @State private var drafts: [StoreID: Draft] = [.modern: Draft(), .luxury: Draft()]
     @State private var selected: StoreID = .modern
     @State private var confirmLogout = false
     @State private var landscape = false
 
-    private var isPhone: Bool { UIDevice.current.userInterfaceIdiom == .phone }
+    private var isPhone: Bool { DeviceKind.isPhone }
     private var isWide: Bool { !isPhone && sizeClass == .regular }
     /// iPad 横向き：時計を上のバーに移し、ボタンを低くして1画面に収める
     private var compact: Bool { isWide && landscape }
@@ -41,6 +41,7 @@ struct RecordView: View {
             .navigationDestination(isPresented: $showAnalysis) { AnalysisView() }
             .fullScreenCover(isPresented: $showManual, onDismiss: { manual.endEditing() }) {
                 ManualRootView()
+                    .environment(\.shellLinks, shellLinks)
             }
             .confirmationDialog("ログアウトしますか？", isPresented: $confirmLogout, titleVisibility: .visible) {
                 Button("ログアウト", role: .destructive) {
@@ -53,10 +54,33 @@ struct RecordView: View {
         }
     }
 
+    /// iPhone のメニュー（記録画面から）
     private var actions: AppActions {
-        AppActions(analysis: { showAnalysis = true },
+        AppActions(screen: .record,
+                   selectedStore: selected,
+                   selectStore: { selected = $0 },
+                   record: {},
                    manual: { showManual = true },
+                   analysis: { showAnalysis = true },
                    logout: { confirmLogout = true })
+    }
+
+    /// マニュアルのメニューから、記録・分析・ログアウトへ戻るための道筋
+    private var shellLinks: ShellLinks {
+        ShellLinks(selectedStore: selected,
+                   openRecord: { store in
+                       if let store { selected = store }
+                       showManual = false
+                   },
+                   openAnalysis: {
+                       showManual = false
+                       // マニュアルが閉じてから分析を開く
+                       DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { showAnalysis = true }
+                   },
+                   logout: {
+                       showManual = false
+                       DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { confirmLogout = true }
+                   })
     }
 
     // MARK: iPhone 縦
@@ -99,7 +123,7 @@ struct RecordView: View {
                 .padding(.vertical, 8)
             }
             .refreshable { await logs.syncNow() }
-            SideDock(selected: $selected, actions: actions)
+            SideDock(actions: actions)
                 .padding(.trailing, 8)
                 .padding(.vertical, 8)
         }
@@ -173,13 +197,6 @@ struct RecordView: View {
     private func binding(_ s: StoreID) -> Binding<Draft> {
         Binding(get: { drafts[s] ?? Draft() }, set: { drafts[s] = $0 })
     }
-}
-
-/// 記録画面から開く先（分析・マニュアル・ログアウト確認）
-struct AppActions {
-    let analysis: () -> Void
-    let manual: () -> Void
-    let logout: () -> Void
 }
 
 // MARK: - 上部の小さな部品

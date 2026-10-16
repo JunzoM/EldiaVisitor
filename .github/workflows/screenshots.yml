@@ -70,6 +70,9 @@ jobs:
           shoot "$PHONE" iphone-portrait
           shoot "$PHONE" iphone-portrait-menu -demoMenuOpen
           shoot "$PHONE" iphone-landscape -demoLandscape
+          shoot "$PHONE" manual-portrait -demoManual
+          shoot "$PHONE" manual-portrait-menu -demoManual -demoMenuOpen
+          shoot "$PHONE" manual-landscape -demoManual -demoLandscape
           shoot "$PAD" ipad-portrait
           shoot "$PAD" ipad-landscape -demoLandscape
           # 確認しやすいよう縮小
