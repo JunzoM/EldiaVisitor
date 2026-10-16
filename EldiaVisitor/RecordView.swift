@@ -9,7 +9,7 @@ struct RecordView: View {
     @Environment(LogStore.self) private var logs
     @Environment(ManualStore.self) private var manual
     @Environment(\.horizontalSizeClass) private var sizeClass
-    @State private var showManual = DemoMode.manualOpen
+    @State private var showManual = false
     @State private var showAnalysis = false
     @State private var drafts: [StoreID: Draft] = [.modern: Draft(), .luxury: Draft()]
     @State private var selected: StoreID = .modern
@@ -39,6 +39,12 @@ struct RecordView: View {
                 }
             )
             .navigationDestination(isPresented: $showAnalysis) { AnalysisView() }
+            // 画面確認用：向きを変えたあとでマニュアルを開く
+            .task {
+                guard DemoMode.manualOpen else { return }
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                showManual = true
+            }
             .fullScreenCover(isPresented: $showManual, onDismiss: { manual.endEditing() }) {
                 ManualRootView()
                     .environment(\.shellLinks, shellLinks)
