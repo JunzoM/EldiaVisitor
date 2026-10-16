@@ -132,17 +132,19 @@ struct LoginView: View {
 }
 
 /// 画面確認用の起動オプション（DEBUG ビルドだけ。CI のスクリーンショットで使う）
-/// -demoLayout：ログイン済みの画面を通信なしで表示 / -demoLandscape：横向き / -demoMenuOpen：iPhone 縦のメニューを開いた状態
+/// -demoLayout：ログイン済みの画面を通信なしで表示 / -demoLandscape：横向き / -demoMenuOpen：iPhone 縦のメニューを開いた状態 / -demoManual：マニュアルを開いた状態
 enum DemoMode {
     #if DEBUG
     private static let args = ProcessInfo.processInfo.arguments
     static let enabled = args.contains("-demoLayout")
     static let landscape = enabled && args.contains("-demoLandscape")
     static let menuOpen = enabled && args.contains("-demoMenuOpen")
+    static let manualOpen = enabled && args.contains("-demoManual")
     #else
     static let enabled = false
     static let landscape = false
     static let menuOpen = false
+    static let manualOpen = false
     #endif
 
     @MainActor

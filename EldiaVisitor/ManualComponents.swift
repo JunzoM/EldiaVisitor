@@ -95,7 +95,8 @@ struct BarPill: View {
         .font(.subheadline.weight(.bold))
         .foregroundStyle(foreground)
         .padding(.horizontal, 14).padding(.vertical, 8)
-        .background(fill, in: Capsule())
+        // iOS 26 以上は Liquid Glass（色付きのボタンはその色のガラス）
+        .glassFill(Capsule(), fill: fill, tinted: fill != Palette.chip)
         .fixedSize()
     }
 }
@@ -158,7 +159,7 @@ struct ImageZoomView: View {
                     .font(.headline)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 18).frame(minHeight: 48)
-                    .background(Color.white.opacity(0.2), in: Capsule())
+                    .glassFill(Capsule(), fill: Color.white.opacity(0.2), tinted: false)
             }
             .buttonStyle(.plain)
             .padding(24)

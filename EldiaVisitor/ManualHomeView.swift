@@ -62,7 +62,7 @@ struct ManualHomeView: View {
             }
         }
         .padding(.horizontal, 16).frame(minHeight: 52)
-        .background(Color.white, in: RoundedRectangle(cornerRadius: 14))
+        .glassFill(RoundedRectangle(cornerRadius: 14), fill: .white, tinted: false)
     }
 
     @ViewBuilder
@@ -107,7 +107,7 @@ struct VoiceSearchButton: View {
         .foregroundStyle(.white)
         .padding(.horizontal, 18)
         .frame(minHeight: 52)
-        .background(voice.listening ? Palette.sunday : Palette.teal, in: RoundedRectangle(cornerRadius: 14))
+        .glassFill(RoundedRectangle(cornerRadius: 14), fill: voice.listening ? Palette.sunday : Palette.teal, tinted: true)
         .scaleEffect(voice.listening ? 1.06 : 1)
         .animation(.easeOut(duration: 0.15), value: voice.listening)
         .fixedSize()
