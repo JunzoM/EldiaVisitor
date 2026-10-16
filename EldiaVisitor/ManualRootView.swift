@@ -113,8 +113,8 @@ struct ManualRootView: View {
             }
             SideDock(actions: shellActions)
                 .padding(.trailing, 8)
-                // 画面の角の丸みに掛からないよう、上は少し空ける
-                .padding(.top, 14)
+                // 画面の角の丸み（半径 約60pt）に店舗ボタンの角が掛からないよう、上を空ける
+                .padding(.top, 28)
                 .padding(.bottom, 8)
         }
         .useFreeLandscapeEdge()
