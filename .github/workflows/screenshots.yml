@@ -1,0 +1,87 @@
+name: Screenshots
+
+# 画面の見た目を確認するためのスクリーンショット（手動実行）。
+# DEBUG ビルドの画面確認用オプション（-demoLayout など）で、通信なしでログイン後の画面を出す。
+# 撮った画像は screenshots ブランチに置く。PR に「screenshots」ラベルを付けると実行される。
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  shots:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'screenshots')
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select newest Xcode
+        run: |
+          xc=$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1)
+          sudo xcode-select -s "$xc"
+          xcodebuild -version
+      - name: Pick simulators
+        run: |
+          xcrun simctl list devices available -j > devices.json
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          d = json.load(open("devices.json"))["devices"]
+          runtimes = sorted([k for k in d if "iOS" in k], reverse=True)
+          def pick(prefixes):
+              for rt in runtimes:
+                  for p in prefixes:
+                      for x in d[rt]:
+                          if x["name"].startswith(p):
+                              return x["udid"], x["name"], rt
+          phone = pick(["iPhone 17 Pro", "iPhone 16 Pro", "iPhone"])
+          pad = pick(["iPad (", "iPad Air", "iPad"])
+          print(f"PHONE={phone[0]}")
+          print(f"PAD={pad[0]}")
+          print(f"PHONE_NAME={phone[1]} {phone[2].split('.')[-1]}")
+          print(f"PAD_NAME={pad[1]} {pad[2].split('.')[-1]}")
+          PY
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild -project EldiaVisitor.xcodeproj -scheme EldiaVisitor \
+            -destination "id=$PHONE" -configuration Debug -derivedDataPath dd \
+            CODE_SIGNING_ALLOWED=NO build | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
+          test -d dd/Build/Products/Debug-iphonesimulator/EldiaVisitor.app
+      - name: Take screenshots
+        run: |
+          app=dd/Build/Products/Debug-iphonesimulator/EldiaVisitor.app
+          bid=com.bestdelight.eldiavisitor
+          mkdir -p shots
+          shoot() {  # 端末 ファイル名 起動オプション…
+            dev=$1; name=$2; shift 2
+            xcrun simctl terminate "$dev" $bid >/dev/null 2>&1 || true
+            xcrun simctl launch "$dev" $bid -demoLayout "$@"
+            sleep 8
+            xcrun simctl io "$dev" screenshot "shots/$name.png"
+          }
+          for dev in "$PHONE" "$PAD"; do
+            xcrun simctl boot "$dev" || true
+            xcrun simctl bootstatus "$dev" -b
+            xcrun simctl status_bar "$dev" override --time "9:41" || true
+            xcrun simctl install "$dev" "$app"
+          done
+          shoot "$PHONE" iphone-portrait
+          shoot "$PHONE" iphone-portrait-menu -demoMenuOpen
+          shoot "$PHONE" iphone-landscape -demoLandscape
+          shoot "$PAD" ipad-portrait
+          shoot "$PAD" ipad-landscape -demoLandscape
+          # 確認しやすいよう縮小
+          for f in shots/*.png; do sips -Z 1100 "$f" >/dev/null; done
+          printf '%s\n%s\n' "$PHONE_NAME" "$PAD_NAME" > shots/devices.txt
+          ls -la shots
+      - name: Push to screenshots branch
+        run: |
+          cd shots
+          git init -q
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -qm "screenshots for ${GITHUB_SHA::7} (${GITHUB_REF_NAME})"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" HEAD:screenshots

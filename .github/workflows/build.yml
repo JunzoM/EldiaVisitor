@@ -11,8 +11,13 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-      - name: Xcode version
-        run: xcodebuild -version
+      - name: Select newest Xcode
+        run: |
+          # 入っている中で一番新しい正式版の Xcode（iOS 27 SDK があればそれ）でビルドする
+          ls -d /Applications/Xcode*.app
+          xc=$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1)
+          sudo xcode-select -s "$xc"
+          echo "::notice title=Xcode::$(xcodebuild -version | tr '\n' ' ') / $(xcodebuild -showsdks | grep -o 'iphoneos[0-9.]*' | tr '\n' ' ')"
       - name: Build for iOS Simulator
         run: |
           set -o pipefail

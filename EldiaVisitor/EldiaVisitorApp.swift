@@ -40,15 +40,16 @@ struct RootView: View {
                 LoginView()
             } else {
                 RecordView()
-                    .task { logs.start() }
+                    .task { if !DemoMode.enabled { logs.start() } }
                     // 回線が切れても見られるよう、マニュアルを先に端末へ保存しておく
-                    .task { await manual.load() }
+                    .task { if !DemoMode.enabled { await manual.load() } }
+                    .task { if DemoMode.landscape { DemoMode.rotateToLandscape() } }
             }
         }
         .animation(.default, value: auth.session == nil)
         // 別のアプリに切り替えている間は同期を止め、戻ったらすぐ最新にする
         .onChange(of: scenePhase) { _, phase in
-            guard auth.session != nil else { return }
+            guard auth.session != nil, !DemoMode.enabled else { return }
             switch phase {
             case .active: logs.start()
             case .background: logs.pause()
@@ -127,5 +128,26 @@ struct LoginView: View {
                 self.error = error.localizedDescription
             }
         }
+    }
+}
+
+/// 画面確認用の起動オプション（DEBUG ビルドだけ。CI のスクリーンショットで使う）
+/// -demoLayout：ログイン済みの画面を通信なしで表示 / -demoLandscape：横向き / -demoMenuOpen：iPhone 縦のメニューを開いた状態
+enum DemoMode {
+    #if DEBUG
+    private static let args = ProcessInfo.processInfo.arguments
+    static let enabled = args.contains("-demoLayout")
+    static let landscape = enabled && args.contains("-demoLandscape")
+    static let menuOpen = enabled && args.contains("-demoMenuOpen")
+    #else
+    static let enabled = false
+    static let landscape = false
+    static let menuOpen = false
+    #endif
+
+    @MainActor
+    static func rotateToLandscape() {
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight)) { _ in }
     }
 }

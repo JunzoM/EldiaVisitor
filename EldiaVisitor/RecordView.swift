@@ -1,45 +1,34 @@
 import SwiftUI
 
-/// 記録画面。iPad（横幅が広い）は2店舗を左右に並べ、iPhone は店舗を切り替える。
+/// 記録画面。
+/// - iPad：横幅が広いときは2店舗を左右に並べ、上のバーにアカウント・マニュアル・分析
+/// - iPhone 縦：店舗を切り替えて1店舗ずつ。左上の丸いボタンにアカウント・分析・マニュアルをまとめる
+/// - iPhone 横：1店舗ずつ。右のドックで店舗の切り替えと、アカウント・分析・マニュアル
 struct RecordView: View {
     @Environment(AuthManager.self) private var auth
     @Environment(LogStore.self) private var logs
     @Environment(ManualStore.self) private var manual
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var showManual = false
+    @State private var showAnalysis = false
     @State private var drafts: [StoreID: Draft] = [.modern: Draft(), .luxury: Draft()]
     @State private var selected: StoreID = .modern
     @State private var confirmLogout = false
     @State private var landscape = false
 
-    private var isWide: Bool { sizeClass == .regular }
+    private let isPhone = UIDevice.current.userInterfaceIdiom == .phone
+    private var isWide: Bool { !isPhone && sizeClass == .regular }
     /// iPad 横向き：時計を上のバーに移し、ボタンを低くして1画面に収める
     private var compact: Bool { isWide && landscape }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: compact ? 10 : 16) {
-                    if !compact { ClockHeader(large: isWide) }
-                    SyncErrorBanner()
-                    if isWide {
-                        HStack(alignment: .top, spacing: 16) {
-                            ForEach(StoreID.allCases) { s in
-                                StorePanel(store: s, draft: binding(s), wide: true, compact: compact)
-                            }
-                        }
-                    } else {
-                        Picker("店舗", selection: $selected) {
-                            ForEach(StoreID.allCases) { Text($0.label).tag($0) }
-                        }
-                        .pickerStyle(.segmented)
-                        .controlSize(.large)
-                        StorePanel(store: selected, draft: binding(selected), wide: false)
-                    }
+            Group {
+                if isPhone {
+                    if landscape { phoneLandscape } else { phonePortrait }
+                } else {
+                    padLayout
                 }
-                .padding(.horizontal, isWide ? 20 : 16)
-                .padding(.top, compact ? 6 : 0)
-                .padding(.bottom, 24)
             }
             .background(Palette.ground)
             .background(
@@ -49,42 +38,7 @@ struct RecordView: View {
                         .onChange(of: g.size) { _, size in landscape = size.width > size.height }
                 }
             )
-            .refreshable { await logs.syncNow() }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    if compact { CompactClock() }
-                }
-                ToolbarItem(placement: .topBarLeading) {
-                    AccountMenu { confirmLogout = true }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showManual = true
-                    } label: {
-                        // ツールバーは Label だとアイコンだけになるので、文字を必ず出す自前の見た目にする
-                        HStack(spacing: 6) {
-                            Image(systemName: "book.pages")
-                            Text(manual.run.map { $0.finished ? "フロントマニュアル" : "フロントマニュアル（続き）" } ?? "フロントマニュアル")
-                        }
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 14).padding(.vertical, 7)
-                        .background(Palette.teal, in: Capsule())
-                        .fixedSize()
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("フロントマニュアルを開く")
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink {
-                        AnalysisView()
-                    } label: {
-                        Label("分析", systemImage: "chart.bar.xaxis")
-                            .labelStyle(.titleAndIcon)
-                    }
-                }
-            }
+            .navigationDestination(isPresented: $showAnalysis) { AnalysisView() }
             .fullScreenCover(isPresented: $showManual, onDismiss: { manual.endEditing() }) {
                 ManualRootView()
             }
@@ -99,9 +53,134 @@ struct RecordView: View {
         }
     }
 
+    private var actions: AppActions {
+        AppActions(analysis: { showAnalysis = true },
+                   manual: { showManual = true },
+                   logout: { confirmLogout = true })
+    }
+
+    // MARK: iPhone 縦
+
+    private var phonePortrait: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                ClockHeader(large: false)
+                SyncErrorBanner()
+                Picker("店舗", selection: $selected) {
+                    ForEach(StoreID.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.large)
+                StorePanel(store: selected, draft: binding(selected), wide: false)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 24)
+        }
+        .refreshable { await logs.syncNow() }
+        // 左上の丸いボタン（押すとアカウント・分析・マニュアルが開く）
+        .overlay(alignment: .topLeading) {
+            ActionCluster(actions: actions)
+        }
+        .toolbar(.hidden, for: .navigationBar)
+    }
+
+    // MARK: iPhone 横
+
+    private var phoneLandscape: some View {
+        HStack(spacing: 0) {
+            ScrollView {
+                VStack(spacing: 10) {
+                    CompactClock()
+                        .frame(maxWidth: .infinity)
+                    SyncErrorBanner()
+                    StorePanel(store: selected, draft: binding(selected), wide: false, compact: true, sideBySide: true)
+                }
+                .padding(.leading, 12)
+                .padding(.trailing, 8)
+                .padding(.vertical, 8)
+            }
+            .refreshable { await logs.syncNow() }
+            SideDock(selected: $selected, actions: actions)
+                .padding(.trailing, 8)
+                .padding(.vertical, 8)
+        }
+        .toolbar(.hidden, for: .navigationBar)
+    }
+
+    // MARK: iPad
+
+    private var padLayout: some View {
+        ScrollView {
+            VStack(spacing: compact ? 10 : 16) {
+                if !compact { ClockHeader(large: isWide) }
+                SyncErrorBanner()
+                if isWide {
+                    HStack(alignment: .top, spacing: 16) {
+                        ForEach(StoreID.allCases) { s in
+                            StorePanel(store: s, draft: binding(s), wide: true, compact: compact)
+                        }
+                    }
+                } else {
+                    Picker("店舗", selection: $selected) {
+                        ForEach(StoreID.allCases) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .controlSize(.large)
+                    StorePanel(store: selected, draft: binding(selected), wide: false)
+                }
+            }
+            .padding(.horizontal, isWide ? 20 : 16)
+            .padding(.top, compact ? 6 : 0)
+            .padding(.bottom, 24)
+        }
+        .refreshable { await logs.syncNow() }
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                if compact { CompactClock() }
+            }
+            ToolbarItem(placement: .topBarLeading) {
+                AccountMenu { confirmLogout = true }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showManual = true
+                } label: {
+                    // ツールバーは Label だとアイコンだけになるので、文字を必ず出す自前の見た目にする
+                    HStack(spacing: 6) {
+                        Image(systemName: "book.pages")
+                        Text(manual.run.map { $0.finished ? "フロントマニュアル" : "フロントマニュアル（続き）" } ?? "フロントマニュアル")
+                    }
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14).padding(.vertical, 7)
+                    .background(Palette.teal, in: Capsule())
+                    .fixedSize()
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("フロントマニュアルを開く")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showAnalysis = true
+                } label: {
+                    Label("分析", systemImage: "chart.bar.xaxis")
+                        .labelStyle(.titleAndIcon)
+                }
+            }
+        }
+    }
+
     private func binding(_ s: StoreID) -> Binding<Draft> {
         Binding(get: { drafts[s] ?? Draft() }, set: { drafts[s] = $0 })
     }
+}
+
+/// 記録画面から開く先（分析・マニュアル・ログアウト確認）
+struct AppActions {
+    let analysis: () -> Void
+    let manual: () -> Void
+    let logout: () -> Void
 }
 
 // MARK: - 上部の小さな部品
@@ -186,6 +265,10 @@ struct CompactClock: View {
 struct PanelMetrics {
     let wide: Bool
     let compact: Bool
+    /// iPhone 横向き：人数ボタンを左、客層・記録ボタンを右に並べる
+    var sideBySide: Bool = false
+    /// 客層のチップを1行に並べる（iPad 横向きだけ。iPhone 横向きは幅が足りないので折り返す）
+    var segmentsInOneRow: Bool { compact && !sideBySide }
 
     /// 人数ボタンの高さ
     var cellHeight: CGFloat { compact ? 38 : (wide ? 56 : 48) }
@@ -205,10 +288,11 @@ struct StorePanel: View {
     @Binding var draft: Draft
     let wide: Bool
     var compact: Bool = false
+    var sideBySide: Bool = false
     @Environment(LogStore.self) private var logs
     @State private var deleting: DisplayLog?
 
-    private var metrics: PanelMetrics { PanelMetrics(wide: wide, compact: compact) }
+    private var metrics: PanelMetrics { PanelMetrics(wide: wide, compact: compact, sideBySide: sideBySide) }
 
     var body: some View {
         VStack(spacing: compact ? 10 : 12) {
@@ -240,14 +324,32 @@ struct StoreInputCard: View {
         VStack(spacing: 0) {
             StoreTodayHeader(store: store, compact: metrics.compact)
 
-            VStack(spacing: metrics.sectionSpacing) {
-                AgeGenderGrid(draft: $draft, metrics: metrics)
-                FrequentComboBar(store: store, draft: $draft, compact: metrics.compact)
-                SegmentPicker(draft: $draft, metrics: metrics)
-                    .padding(.top, metrics.compact ? 2 : 4)
-                Divider().padding(.vertical, metrics.compact ? 2 : 4)
-                DraftSummaryRow(draft: $draft)
-                actionRow
+            Group {
+                if metrics.sideBySide {
+                    // iPhone 横向き：左に人数ボタン、右に客層と記録ボタン
+                    HStack(alignment: .top, spacing: 12) {
+                        AgeGenderGrid(draft: $draft, metrics: metrics)
+                            .frame(maxWidth: .infinity)
+                        VStack(spacing: metrics.sectionSpacing) {
+                            FrequentComboBar(store: store, draft: $draft, compact: metrics.compact)
+                            SegmentPicker(draft: $draft, metrics: metrics)
+                            Divider().padding(.vertical, 2)
+                            DraftSummaryRow(draft: $draft)
+                            actionRow
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                } else {
+                    VStack(spacing: metrics.sectionSpacing) {
+                        AgeGenderGrid(draft: $draft, metrics: metrics)
+                        FrequentComboBar(store: store, draft: $draft, compact: metrics.compact)
+                        SegmentPicker(draft: $draft, metrics: metrics)
+                            .padding(.top, metrics.compact ? 2 : 4)
+                        Divider().padding(.vertical, metrics.compact ? 2 : 4)
+                        DraftSummaryRow(draft: $draft)
+                        actionRow
+                    }
+                }
             }
             .padding(metrics.cardPadding)
         }
@@ -378,7 +480,7 @@ struct SegmentPicker: View {
     let metrics: PanelMetrics
 
     private var gridColumns: [GridItem] {
-        metrics.compact ? Array(repeating: GridItem(.flexible(), spacing: 4), count: Segment.allCases.count)
+        metrics.segmentsInOneRow ? Array(repeating: GridItem(.flexible(), spacing: 4), count: Segment.allCases.count)
                         : [GridItem(.adaptive(minimum: 80), spacing: 6)]
     }
 

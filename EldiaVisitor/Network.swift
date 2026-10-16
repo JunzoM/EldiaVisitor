@@ -119,6 +119,13 @@ final class AuthManager {
     @ObservationIgnored private var refreshTask: Task<AuthSession, Error>?
 
     init() {
+        #if DEBUG
+        // 画面確認用（CI のスクリーンショット）。通信はしない
+        if DemoMode.enabled {
+            session = AuthSession(accessToken: "demo", refreshToken: "demo", expiresAt: .distantFuture, email: "front@eldia.example")
+            return
+        }
+        #endif
         if let data = Keychain.load(), let s = try? JSONDecoder().decode(AuthSession.self, from: data) {
             session = s
         }
