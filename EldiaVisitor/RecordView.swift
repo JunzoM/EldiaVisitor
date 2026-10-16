@@ -90,8 +90,7 @@ struct RecordView: View {
         HStack(spacing: 0) {
             ScrollView {
                 VStack(spacing: 10) {
-                    CompactClock()
-                        .frame(maxWidth: .infinity)
+                    // 時計は店舗名の行に入れて、人数ボタンが1画面に収まるようにする
                     SyncErrorBanner()
                     StorePanel(store: selected, draft: binding(selected), wide: false, compact: true, sideBySide: true)
                 }
@@ -322,7 +321,7 @@ struct StoreInputCard: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            StoreTodayHeader(store: store, compact: metrics.compact)
+            StoreTodayHeader(store: store, compact: metrics.compact, inlineClock: metrics.sideBySide)
 
             Group {
                 if metrics.sideBySide {
@@ -384,10 +383,38 @@ struct StoreInputCard: View {
 struct StoreTodayHeader: View {
     let store: StoreID
     let compact: Bool
+    /// iPhone 横向き：高さを節約するため、店舗名・今日の件数・時計を1行に並べる
+    var inlineClock: Bool = false
     @Environment(LogStore.self) private var logs
 
     var body: some View {
         let today = logs.today(for: store)
+        if inlineClock {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(store.label).font(.title3.weight(.heavy))
+                Text("今日 \(today.groups)組・\(today.people)名").font(.footnote.weight(.semibold))
+                Spacer(minLength: 8)
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(JST.dateLong.string(from: ctx.date))
+                            .font(.caption.weight(.semibold))
+                        Text(JST.hms.string(from: ctx.date))
+                            .font(.system(size: 24, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(Color.primary)
+                    }
+                }
+            }
+            .lineLimit(1)
+            .foregroundStyle(store.deep)
+            .padding(.horizontal, 16).padding(.vertical, 6)
+            .background(store.soft)
+        } else {
+            header(today)
+        }
+    }
+
+    private func header(_ today: DayCount) -> some View {
         VStack(spacing: 2) {
             Text(store.label).font(.title3.weight(.heavy))
             Text("今日 \(today.groups)組・\(today.people)名").font(.footnote.weight(.semibold))
