@@ -105,6 +105,41 @@ extension EnvironmentValues {
 /// iPhone のときだけ、縦横で同じメニュー（縦＝左上の丸いボタン、横＝右のドック）を使う
 enum DeviceKind {
     @MainActor static var isPhone: Bool { UIDevice.current.userInterfaceIdiom == .phone }
+
+    /// iPhone 横向きで、カメラ（ダイナミックアイランド）が無い側の端。
+    /// iOS は左右とも同じ幅の余白を空けるが、カメラの無い側は画面の端まで使える
+    @MainActor static func freeLandscapeEdge() -> Edge.Set {
+        guard isPhone,
+              let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first
+        else { return [] }
+        switch scene.effectiveGeometry.interfaceOrientation {
+        case .landscapeRight: return .trailing   // カメラは左側
+        case .landscapeLeft: return .leading     // カメラは右側
+        default: return []
+        }
+    }
+}
+
+/// iPhone 横向き：カメラの無い側の余白を詰めて、画面の端近くまで使う
+struct UseFreeLandscapeEdge: ViewModifier {
+    @State private var free: Edge.Set = []
+
+    func body(content: Content) -> some View {
+        content
+            .padding(free, 6)
+            .ignoresSafeArea(.container, edges: free)
+            .background(
+                GeometryReader { g in
+                    Color.clear
+                        .onAppear { free = DeviceKind.freeLandscapeEdge() }
+                        .onChange(of: g.size) { _, _ in free = DeviceKind.freeLandscapeEdge() }
+                }
+            )
+    }
+}
+
+extension View {
+    func useFreeLandscapeEdge() -> some View { modifier(UseFreeLandscapeEdge()) }
 }
 
 // MARK: - アカウントの中身（メール・最終同期・ログアウト）
