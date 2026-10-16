@@ -131,8 +131,11 @@ struct RecordView: View {
             .refreshable { await logs.syncNow() }
             SideDock(actions: actions)
                 .padding(.trailing, 8)
-                .padding(.vertical, 8)
+                // 画面の角の丸みに掛からないよう、上は少し空ける
+                .padding(.top, 14)
+                .padding(.bottom, 8)
         }
+        .useFreeLandscapeEdge()
         .toolbar(.hidden, for: .navigationBar)
     }
 

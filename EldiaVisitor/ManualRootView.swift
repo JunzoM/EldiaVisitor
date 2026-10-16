@@ -113,8 +113,11 @@ struct ManualRootView: View {
             }
             SideDock(actions: shellActions)
                 .padding(.trailing, 8)
-                .padding(.vertical, 8)
+                // 画面の角の丸みに掛からないよう、上は少し空ける
+                .padding(.top, 14)
+                .padding(.bottom, 8)
         }
+        .useFreeLandscapeEdge()
     }
 
     /// iPhone の上の行：［メニューの場所］［◯◯に戻る／見出し］……［編集］
